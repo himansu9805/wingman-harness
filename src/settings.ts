@@ -7,7 +7,8 @@ config();
 class Settings {
   readonly BASE_URL: string;
   readonly MODEL_NAME: string;
-  readonly SKILLS_DIR;
+  readonly SKILLS_DIR: string;
+  readonly MCP_CONFIG_PATH: string;
 
   private readonly BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +24,7 @@ class Settings {
     this.BASE_URL = OLLAMA_BASE_URL;
     this.MODEL_NAME = OLLAMA_MODEL;
     this.SKILLS_DIR = join(this.BASE_DIR, "..", "skills");
+    this.MCP_CONFIG_PATH = join(this.BASE_DIR, "..", "mcp.config.json");
   }
 }
 

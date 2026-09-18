@@ -1,8 +1,9 @@
 import { settings } from "@/settings";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { HumanMessage, AIMessage, isAIMessage } from "@langchain/core/messages";
+import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { Agent } from "@/core/agent";
+import { closeMcpTools } from "@/mcp/mcp";
 
 const THREAD_ID = "cli-session-1";
 
@@ -68,12 +69,16 @@ async function main() {
       }
       console.log(`● ${finalMessage?.content ?? "(no response)"}\n`);
     }
+  } catch (err) {
+    console.log(`● [turn failed: ${(err as Error).message}]\n`);
   } finally {
     rl.close();
+    await closeMcpTools();
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  await closeMcpTools();
   process.exit(1);
 });

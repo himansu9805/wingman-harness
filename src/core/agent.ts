@@ -1,5 +1,6 @@
 import { ChatOllama } from "@langchain/ollama";
 import { AIMessage, SystemMessage } from "@langchain/core/messages";
+import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
   StateGraph,
   MessagesAnnotation,
@@ -8,34 +9,48 @@ import {
   MemorySaver,
 } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { tools } from "@/tools/tools";
+import { tools as localTools } from "@/tools/tools";
 import { renderSkillIndex } from "@/skills/skills";
+import { loadMcpTools } from "@/mcp/mcp";
 
 export class Agent {
   private readonly baseUrl: string;
   private readonly modelName: string;
-  private readonly toolNode = new ToolNode(tools);
   private readonly checkpointer = new MemorySaver();
 
+  private readonly toolsPromise: Promise<StructuredToolInterface[]>;
+  private readonly boundModelPromise: Promise<
+    ReturnType<ChatOllama["bindTools"]>
+  >;
+  private toolNodePromise: Promise<ToolNode> | null = null;
   private readonly systemMessagePromise: Promise<SystemMessage>;
 
-  private readonly model;
   readonly app;
 
   constructor(baseUrl: string, modelName: string) {
     this.baseUrl = baseUrl;
     this.modelName = modelName;
+
+    this.toolsPromise = loadMcpTools().then((mcpTools) => [
+      ...localTools,
+      ...mcpTools,
+    ]);
+
+    this.boundModelPromise = this.toolsPromise.then((allTools) =>
+      new ChatOllama({
+        model: this.modelName,
+        baseUrl: this.baseUrl,
+        temperature: 0.7,
+      }).bindTools(allTools),
+    );
+
     this.systemMessagePromise = renderSkillIndex().then(
       (index) => new SystemMessage(index || "You have no skills available."),
     );
-    this.model = new ChatOllama({
-      model: this.modelName,
-      baseUrl: this.baseUrl,
-      temperature: 0.7,
-    }).bindTools(tools);
+
     this.app = new StateGraph(MessagesAnnotation)
       .addNode("agent", this.callModel.bind(this))
-      .addNode("tools", this.toolNode)
+      .addNode("tools", this.toolsNode.bind(this))
       .addEdge(START, "agent")
       .addConditionalEdges("agent", this.shouldContinue.bind(this), {
         tools: "tools",
@@ -45,12 +60,26 @@ export class Agent {
       .compile({ checkpointer: this.checkpointer });
   }
 
+  private async getToolNode(): Promise<ToolNode> {
+    if (!this.toolNodePromise) {
+      this.toolNodePromise = this.toolsPromise.then(
+        (allTools) => new ToolNode(allTools),
+      );
+    }
+    return this.toolNodePromise;
+  }
+
+  private async toolsNode(state: typeof MessagesAnnotation.State) {
+    const toolNode = await this.getToolNode();
+    return toolNode.invoke(state);
+  }
+
   private async callModel(state: typeof MessagesAnnotation.State) {
-    const systemMessage = await this.systemMessagePromise;
-    const response = await this.model.invoke([
-      systemMessage,
-      ...state.messages,
+    const [systemMessage, model] = await Promise.all([
+      this.systemMessagePromise,
+      this.boundModelPromise,
     ]);
+    const response = await model.invoke([systemMessage, ...state.messages]);
     return { messages: [response] };
   }
 

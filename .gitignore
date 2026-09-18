@@ -11,6 +11,7 @@ dist/
 # Logs
 npm-debug.log*
 *.log
+.playwright-mcp/
 
 # OS cruft
 .DS_Store
