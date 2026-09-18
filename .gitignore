@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables — copy .env.example to .env locally, never commit .env
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+*.log
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
