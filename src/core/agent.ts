@@ -12,18 +12,18 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { tools as localTools } from "@/tools/tools";
 import { renderSkillIndex } from "@/skills/skills";
 import { loadMcpTools } from "@/mcp/mcp";
+import { GraphMemory } from "@/memory/graph";
 
 export class Agent {
   private readonly baseUrl: string;
   private readonly modelName: string;
   private readonly checkpointer = new MemorySaver();
-
   private readonly toolsPromise: Promise<StructuredToolInterface[]>;
   private readonly boundModelPromise: Promise<
     ReturnType<ChatOllama["bindTools"]>
   >;
   private toolNodePromise: Promise<ToolNode> | null = null;
-  private readonly systemMessagePromise: Promise<SystemMessage>;
+  private readonly skillIndexPromise: Promise<string>;
 
   readonly app;
 
@@ -44,9 +44,7 @@ export class Agent {
       }).bindTools(allTools),
     );
 
-    this.systemMessagePromise = renderSkillIndex().then(
-      (index) => new SystemMessage(index || "You have no skills available."),
-    );
+    this.skillIndexPromise = renderSkillIndex();
 
     this.app = new StateGraph(MessagesAnnotation)
       .addNode("agent", this.callModel.bind(this))
@@ -74,9 +72,24 @@ export class Agent {
     return toolNode.invoke(state);
   }
 
+  private async buildSystemMessage(): Promise<SystemMessage> {
+    const [skillIndex, memoryIndex] = await Promise.all([
+      this.skillIndexPromise,
+      GraphMemory.getInstance().getMemoryIndex(),
+    ]);
+
+    const sections: string[] = [];
+    if (memoryIndex) {
+      sections.push(memoryIndex);
+    }
+    sections.push(skillIndex || "You have no skills available.");
+
+    return new SystemMessage(sections.join("\n\n"));
+  }
+
   private async callModel(state: typeof MessagesAnnotation.State) {
     const [systemMessage, model] = await Promise.all([
-      this.systemMessagePromise,
+      this.buildSystemMessage(),
       this.boundModelPromise,
     ]);
     const response = await model.invoke([systemMessage, ...state.messages]);
@@ -85,7 +98,6 @@ export class Agent {
 
   private shouldContinue(state: typeof MessagesAnnotation.State) {
     const lastMessage = state.messages[state.messages.length - 1] as AIMessage;
-
     return lastMessage.tool_calls?.length ? "tools" : END;
   }
 }

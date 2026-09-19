@@ -4,6 +4,8 @@ import { stdin, stdout } from "node:process";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { Agent } from "@/core/agent";
 import { closeMcpTools } from "@/mcp/mcp";
+import { MEMORY_TOOL_NAMES } from "@/tools/tools";
+import { GraphMemory } from "@/memory/graph";
 
 const THREAD_ID = "cli-session-1";
 
@@ -17,6 +19,8 @@ function printToolCallIndicators(message: AIMessage) {
     if (call.name === "load_skill") {
       const skillName = (call.args as { name?: string }).name ?? "?";
       console.log(`  📘 skill used: ${skillName}`);
+    } else if (MEMORY_TOOL_NAMES.has(call.name)) {
+      console.log(`  🧠 memory: ${call.name}(${JSON.stringify(call.args)})`);
     } else {
       console.log(
         `  🔧 tool called: ${call.name}(${JSON.stringify(call.args)})`,
@@ -74,11 +78,19 @@ async function main() {
   } finally {
     rl.close();
     await closeMcpTools();
+    await GraphMemory.getInstance().closeGraph();
   }
 }
 
 main().catch(async (err) => {
   console.error(err);
   await closeMcpTools();
+  await GraphMemory.getInstance().closeGraph();
   process.exit(1);
+});
+
+process.on("SIGINT", async () => {
+  await closeMcpTools();
+  await GraphMemory.getInstance().closeGraph();
+  process.exit(0);
 });

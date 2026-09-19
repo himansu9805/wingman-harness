@@ -9,6 +9,7 @@ class Settings {
   readonly MODEL_NAME: string;
   readonly SKILLS_DIR: string;
   readonly MCP_CONFIG_PATH: string;
+  readonly GRAPH_DB_PATH: string;
 
   private readonly BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +26,7 @@ class Settings {
     this.MODEL_NAME = OLLAMA_MODEL;
     this.SKILLS_DIR = join(this.BASE_DIR, "..", "skills");
     this.MCP_CONFIG_PATH = join(this.BASE_DIR, "..", "mcp.config.json");
+    this.GRAPH_DB_PATH = join(this.BASE_DIR, "..", "memory.lbug");
   }
 }
 
