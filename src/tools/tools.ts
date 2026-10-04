@@ -2,6 +2,8 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { loadSkillContent } from "@/skills/skills";
 import { GraphMemory } from "@/memory/graph";
+import { settings } from "@/settings";
+import { schedulerTools } from "./scheduler";
 
 const graphMemory = GraphMemory.getInstance();
 
@@ -142,6 +144,7 @@ export const tools = [
   remember,
   recallMemory,
   logConversation,
+  ...(settings.SCHEDULER_ENABLED ? schedulerTools : []),
 ];
 
 export const MEMORY_TOOL_NAMES = new Set([
@@ -149,3 +152,5 @@ export const MEMORY_TOOL_NAMES = new Set([
   "recall_memory",
   "log_conversation",
 ]);
+
+export const SCHEDULER_TOOL_NAMES = new Set(schedulerTools.map((t) => t.name));

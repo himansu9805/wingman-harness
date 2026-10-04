@@ -1,4 +1,4 @@
-import { ChatOllama } from "@langchain/ollama";
+import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import {
@@ -15,21 +15,30 @@ import { loadMcpTools } from "@/mcp/mcp";
 import { GraphMemory } from "@/memory/graph";
 
 export class Agent {
+  private readonly modelProvider: string;
   private readonly baseUrl: string;
   private readonly modelName: string;
+  private readonly apiKey: string;
   private readonly checkpointer = new MemorySaver();
   private readonly toolsPromise: Promise<StructuredToolInterface[]>;
   private readonly boundModelPromise: Promise<
-    ReturnType<ChatOllama["bindTools"]>
+    ReturnType<ChatOpenAI["bindTools"]>
   >;
   private toolNodePromise: Promise<ToolNode> | null = null;
   private readonly skillIndexPromise: Promise<string>;
 
   readonly app;
 
-  constructor(baseUrl: string, modelName: string) {
+  constructor(
+    modelProvider: string,
+    baseUrl: string,
+    modelName: string,
+    apiKey: string,
+  ) {
+    this.modelProvider = modelProvider;
     this.baseUrl = baseUrl;
     this.modelName = modelName;
+    this.apiKey = apiKey;
 
     this.toolsPromise = loadMcpTools().then((mcpTools) => [
       ...localTools,
@@ -37,10 +46,20 @@ export class Agent {
     ]);
 
     this.boundModelPromise = this.toolsPromise.then((allTools) =>
-      new ChatOllama({
+      new ChatOpenAI({
         model: this.modelName,
-        baseUrl: this.baseUrl,
-        temperature: 0.7,
+        apiKey: this.apiKey,
+        // Ollama's OpenAI-compatible endpoint targets Chat Completions, so
+        // only use the Responses API against OpenAI itself.
+        useResponsesApi: this.modelProvider === "OPENAI",
+        // reasoning: { effort: "none" },
+        ...(this.modelProvider !== "OPENAI"
+          ? {
+              configuration: {
+                baseURL: this.baseUrl,
+              },
+            }
+          : {}),
       }).bindTools(allTools),
     );
 
