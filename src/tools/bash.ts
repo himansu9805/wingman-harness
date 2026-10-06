@@ -3,10 +3,9 @@ import { promisify } from "node:util";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { confirm } from "@/core/confirm";
+import { parse } from "shell-quote";
 
 const execFilePromise = promisify(execFile);
-
-import { parse } from "shell-quote";
 
 export type Verdict = "allow" | "deny" | "ask";
 
