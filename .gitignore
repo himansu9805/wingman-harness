@@ -24,3 +24,4 @@ Thumbs.db
 
 # Databases
 *.lbug
+*.lbug.wal

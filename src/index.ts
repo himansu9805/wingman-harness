@@ -9,6 +9,7 @@ import { MEMORY_TOOL_NAMES } from "@/tools/tools";
 import { closeScheduler, startScheduler } from "@/scheduler/scheduler";
 import type { ScheduledEvent } from "@/scheduler/interfaces";
 import { recordRun } from "./scheduler/results";
+import { setConfirmer } from "@/core/confirm";
 
 const THREAD_ID = "cli-session-1";
 
@@ -148,11 +149,30 @@ async function main() {
     }
   });
 
+  // True during scheduled turns: nobody may be at the terminal, and the "> "
+  // question is still pending, so tool confirmations are denied outright.
+  let unattended = false;
+
+  // Tools ask through the main interface; a second readline on stdin would
+  // double-echo keys and pause stdin when it closes, freezing the prompt.
+  setConfirmer(async (question) => {
+    if (unattended) return false;
+    try {
+      const answer = await rl.question(question, {
+        signal: turnController?.signal, // Ctrl+C cancels the prompt with the turn
+      });
+      return ["y", "yes"].includes(answer.trim().toLowerCase());
+    } catch {
+      return false; // aborted or closed counts as "no"
+    }
+  });
+
   const runScheduledTurn = (event: ScheduledEvent) =>
     enqueueTurn(async () => {
       if (atPrompt) stdout.write("\r\x1b[K"); // clear the "> " line
       console.log(`⏰ scheduled task ${event.jobId}: ${event.prompt}`);
       turnController = new AbortController();
+      unattended = true;
       const startedAt = new Date();
       try {
         const output = await runTurn(
@@ -184,6 +204,7 @@ async function main() {
         throw err;
       } finally {
         turnController = null;
+        unattended = false;
         if (atPrompt) rl.prompt(true); // redraw "> " and whatever was typed
       }
     });
