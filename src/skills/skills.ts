@@ -141,10 +141,11 @@ export async function renderSkillIndex(): Promise<string> {
   if (skills.length === 0) return "";
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`);
   return [
-    "You have access to the following skills. Each is a set of",
-    "detailed instructions for a specific kind of task. When a task",
-    "matches one, call the load_skill tool with its name BEFORE",
-    "attempting the task, then follow its instructions exactly.",
+    "# Skills",
+    "Skills are written instructions for specific tasks. They are not tools.",
+    "When the user's request matches a skill below, call load_skill with its",
+    "exact name BEFORE starting, then follow the loaded instructions. For",
+    "anything else, ignore this list.",
     "",
     ...lines,
   ].join("\n");

@@ -14,48 +14,78 @@ const remember = tool(
   {
     name: "remember",
     description:
-      "Saves a fact to long-term memory as a relationship between two " +
-      "entities, persisting across conversations and restarts. Example: " +
-      "subject='Himansu', relation='works_on', object='Wingman Harness'. " +
-      "For a standalone preference or fact with no natural second " +
-      "entity, use object_type 'fact' and a short phrase naming the " +
-      "fact itself as the object. Use when the user explicitly asks you " +
-      "to remember something, or states a standing preference or fact " +
-      "clearly worth keeping for future sessions.",
+      "Saves one fact to long-term memory, kept across conversations. " +
+      "A fact is a link between two names: subject → relation → object. " +
+      "Use when the user asks you to remember something, or states a lasting " +
+      "preference or fact about themselves or their work. Don't use it for " +
+      "passing details of the current task. Examples: " +
+      "{subject: 'User', subject_type: 'person', relation: 'works_on', " +
+      "object: 'Wingman Harness', object_type: 'project'}; " +
+      "{subject: 'User', subject_type: 'person', relation: 'prefers', " +
+      "object: 'TypeScript over Python', object_type: 'fact'}. " +
+      "Reuse names exactly as they appear in the memory list when they exist.",
     schema: z.object({
-      subject: z.string().describe("The main entity this fact is about"),
-      subject_type: z.enum(["person", "project", "topic", "fact"]),
+      subject: z
+        .string()
+        .describe(
+          "Who or what the fact is about, e.g. the user's name. Reuse an existing name from the memory list if there is one.",
+        ),
+      subject_type: z
+        .enum(["person", "project", "topic", "fact"])
+        .describe("What kind of thing the subject is."),
       relation: z
         .string()
         .describe(
-          "How subject relates to object, e.g. 'works_on', 'prefers', 'depends_on'",
+          "A short snake_case verb linking subject to object, e.g. 'works_on', 'prefers', 'lives_in', 'uses'.",
         ),
-      object: z.string().describe("The other entity in this relationship"),
-      object_type: z.enum(["person", "project", "topic", "fact"]),
+      object: z
+        .string()
+        .describe(
+          "The other side of the fact. For a standalone preference, a short phrase, e.g. 'dark mode'.",
+        ),
+      object_type: z
+        .enum(["person", "project", "topic", "fact"])
+        .describe(
+          "What kind of thing the object is. Use 'fact' for a short phrase like a preference.",
+        ),
       notes: z
         .string()
         .optional()
-        .describe("Optional extra detail about the subject entity"),
+        .describe(
+          "Optional extra detail about the subject, e.g. their role. Leave out if there is none.",
+        ),
     }),
   },
 );
 
 const recallMemory = tool(
   async ({ name }) => {
-    const result = await graphMemory.recall(name);
+    // Small models sometimes copy a label along with the name, e.g.
+    // "User (person)"; retry without it before reporting a miss.
+    const result =
+      (await graphMemory.recall(name)) ??
+      (await graphMemory.recall(name.replace(/\s*\([^)]*\)\s*$/, "").trim()));
     return (
       result ??
-      `No memory found for "${name}". Check the memory index for the exact entity name.`
+      `No memory found for "${name}". Names must match the memory list ` +
+        `exactly. If nothing there fits, tell the user you don't have that ` +
+        `information.`
     );
   },
   {
     name: "recall_memory",
     description:
-      "Loads full details and connections for one specific entity from " +
-      "long-term memory. Call this with an exact name from the memory " +
-      "index before answering questions about that person, project, or topic.",
+      "Loads the stored facts about one name from long-term memory: its notes " +
+      "and every link to other names. Call it before answering questions " +
+      "about the user, their projects, or anything in the memory list, e.g. " +
+      "'what do you know about me?'. Pass a name copied exactly from the " +
+      "memory list in the system prompt. Call it once per name you need.",
     schema: z.object({
-      name: z.string().describe("The exact entity name from the memory index"),
+      name: z
+        .string()
+        .describe(
+          "A name copied exactly from the memory list, e.g. 'Himansu'. Not 'me', 'you' or 'the user'.",
+        ),
     }),
   },
 );
@@ -68,20 +98,20 @@ const logConversation = tool(
   {
     name: "log_conversation",
     description:
-      "Records a summary of this conversation in long-term memory, " +
-      "linked to the people, projects, or topics it covered. Call this " +
-      "near the end of a conversation that discussed something worth " +
-      "remembering later.",
+      "Saves a short summary of this conversation to long-term memory, linked " +
+      "to the names it was about. Use it at the end of a conversation that " +
+      "made a decision or produced something worth recalling later. Don't use " +
+      "it for greetings, small talk, or one-off questions.",
     schema: z.object({
       summary: z
         .string()
         .describe(
-          "A one or two sentence summary of what this conversation covered",
+          "One or two sentences on what was discussed or decided, e.g. 'Chose Drizzle as the ORM for Wingman Harness.'",
         ),
       entities: z
         .array(z.string())
         .describe(
-          "Names of people, projects, or topics this conversation was about",
+          "Names this conversation was about, e.g. ['Himansu', 'Wingman Harness']. Reuse names from the memory list when they exist.",
         ),
     }),
   },

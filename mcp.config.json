@@ -1,9 +1,14 @@
 {
   "mcpServers": {
-    "playwright": {
-      "transport": "stdio",
+    "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp", "--headless"]
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--no-usage-statistics",
+        "--slim",
+        "--headless"
+      ]
     }
   }
 }

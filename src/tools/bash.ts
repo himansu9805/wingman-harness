@@ -62,14 +62,17 @@ const executeBashCommand = tool(
     if (!argv) {
       return JSON.stringify({
         error:
-          "Shell syntax (pipes, ;, &&, $(), redirects, globs) is not supported. " +
-          "Run one plain command at a time.",
+          "Rejected: shell syntax (pipes, ;, &&, $(), redirects, wildcards) " +
+          "is not supported. Run each command separately, e.g. 'docker ps' " +
+          "then 'docker stats --no-stream', and combine the results yourself.",
       });
     }
     const verdict = checkCommand(argv);
     if (verdict === "deny") {
       return JSON.stringify({
-        error: "This command is blocked by the permissions config.",
+        error:
+          "Blocked: this command is not allowed on this machine. Don't retry " +
+          "it or a variant. Tell the user it is blocked.",
       });
     }
     if (
@@ -77,7 +80,9 @@ const executeBashCommand = tool(
       !(await confirm(` ▶️ Execute command: "${command}"? [y/N]: `))
     ) {
       return JSON.stringify({
-        error: "The user explicitly declined execution of this command.",
+        error:
+          "Declined: the user chose not to run this command. Don't retry it. " +
+          "Ask the user how they'd like to proceed.",
       });
     }
     const [file, ...args] = argv;
@@ -109,12 +114,17 @@ const executeBashCommand = tool(
   {
     name: "exec_bash_command",
     description:
-      "Executes a standalone bash command on the local machine host after obtaining user confirmation.",
+      "Runs one command on the user's computer and returns its stdout, " +
+      "stderr and exit_code. Use it to inspect the machine: containers, " +
+      "files, processes, git, disk usage. Call it directly: it asks the user " +
+      "for approval itself when needed, so don't ask permission in your reply " +
+      "first. Only one plain command per call: pipes, ;, &&, $(), redirects " +
+      "and wildcards are rejected. Some commands are blocked entirely.",
     schema: z.object({
       command: z
         .string()
         .describe(
-          "The specific bash command to execute in the terminal shell.",
+          "One plain command with its arguments. Right: 'docker ps', 'ls -la /tmp', 'git status'. Wrong (rejected): 'ps aux | grep postgres', 'cd src && ls'.",
         ),
     }),
   },

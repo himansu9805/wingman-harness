@@ -99,11 +99,17 @@ async function runTurn(
   let finalMessage: AIMessage | undefined;
 
   for await (const update of stream) {
-    const agentUpdate = update.agent;
-    if (!agentUpdate) {
+    const route =
+      update["TypeSafeModelRouterMiddleware.before_agent"]?.modelRoute;
+    if (route) {
+      console.log(`  🧭 ${route.choice} (${route.confidence.toFixed(2)})`);
+    }
+
+    const modelUpdate = update.model_request;
+    if (!modelUpdate) {
       continue;
     }
-    const message = agentUpdate.messages[agentUpdate.messages.length - 1];
+    const message = modelUpdate.messages[modelUpdate.messages.length - 1];
     if (!AIMessage.isInstance(message)) {
       continue;
     }
@@ -125,15 +131,12 @@ async function runTurn(
  */
 async function main() {
   console.log("Type a message, or /exit to quit.");
-  console.log(`(model: ${settings.MODEL_NAME})\n`);
+  console.log(
+    `(models: fast ${settings.FAST_MODEL_NAME} · strong ${settings.STRONG_MODEL_NAME})\n`,
+  );
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
-  const agent = new Agent(
-    settings.MODEL_PROVIDER,
-    settings.BASE_URL,
-    settings.MODEL_NAME,
-    settings.API_KEY,
-  );
+  const agent = await Agent.create();
 
   // In a TTY, readline owns Ctrl+C (raw mode), so process-level SIGINT never
   // fires. Ctrl+C cancels the in-flight turn, or exits when at the prompt.
@@ -175,9 +178,21 @@ async function main() {
       unattended = true;
       const startedAt = new Date();
       try {
+        // Without this framing, a firing "remind me…" prompt reads like a new
+        // request: the model schedules or lists tasks instead of doing it.
+        const message =
+          `This is a task the user scheduled earlier, and it is due right ` +
+          `now:\n\n"${event.prompt}"\n\n` +
+          `Carry it out now. Your reply is delivered to the user as the ` +
+          `result, so if it's a reminder, your reply IS the reminder: write ` +
+          `a short, friendly message to the user, e.g. "Time to drink some ` +
+          `water! 💧". Use a tool only if the task needs information or an ` +
+          `action you can't do in your reply. Don't schedule, list or cancel ` +
+          `tasks. Nobody may be at the keyboard, so commands that need ` +
+          `approval will be declined.`;
         const output = await runTurn(
           agent,
-          event.prompt,
+          message,
           event.threadId,
           turnController.signal,
         );

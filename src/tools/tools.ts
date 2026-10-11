@@ -20,10 +20,17 @@ const loadSkill = tool(
   {
     name: "load_skill",
     description:
-      "Loads the full instructions for a named skill. Call this before " +
-      "attempting a task that matches one of the available skills.",
+      "Loads the written instructions for one skill from the skills list in " +
+      "the system prompt, e.g. 'commit-message'. Call it before starting a " +
+      "task that matches a skill, then follow the instructions it returns. " +
+      "Skills are instructions, not abilities: don't call this to find out " +
+      "what you can do, and don't call it for tasks no skill matches.",
     schema: z.object({
-      name: z.string().describe("The exact skill name from the skill index"),
+      name: z
+        .string()
+        .describe(
+          "A skill name copied exactly from the skills list, e.g. 'commit-message'.",
+        ),
     }),
   },
 );

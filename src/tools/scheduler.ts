@@ -12,7 +12,7 @@ const scheduleTask = tool(
   async ({ prompt, when }) => {
     try {
       const id = await scheduleOnce(when, { prompt });
-      return `Scheduled task ${id} for ${when}`;
+      return `Scheduled task ${id} for ${when}. Tell the user what was scheduled and when.`;
     } catch (err) {
       return `Could not schedule task: ${(err as Error).message}`;
     }
@@ -20,15 +20,21 @@ const scheduleTask = tool(
   {
     name: "schedule_task",
     description:
-      "Schedules a one-off task for you to run later. The prompt runs in a " +
-      "fresh conversation, so it must be self-contained.",
+      "Schedules something to happen once, later. Use for reminders and " +
+      "delayed actions, e.g. 'remind me in 10 minutes to stretch'. When it " +
+      "fires, you receive the prompt as a new task and carry it out. For " +
+      "things that repeat, use schedule_recurring_task instead.",
     schema: z.object({
       prompt: z
         .string()
-        .describe("The instruction to run when the task fires."),
+        .describe(
+          'A full sentence saying what to do when the task fires, starting with a verb. Good: "Tell the user it\'s time to drink water." Bad: "drink water" or "Remind the user to drink water." It runs in a new conversation with no memory of this one, so include every detail needed.',
+        ),
       when: z
         .string()
-        .describe("When to run, e.g. 'in 10 minutes', or an ISO date"),
+        .describe(
+          "When to run: a relative time like 'in 10 minutes', a clock time like '11:03 AM', or an ISO date-time like '2026-10-12T09:00:00'. Work it out from the current date and time.",
+        ),
     }),
   },
 );
@@ -37,7 +43,7 @@ const scheduleRecurringTask = tool(
   async ({ prompt, interval }) => {
     try {
       const id = await scheduleRecurring(interval, { prompt });
-      return `Scheduled recurring task ${id} every ${interval}`;
+      return `Scheduled recurring task ${id} (${interval}). Tell the user what was scheduled and how often.`;
     } catch (err) {
       return `Could not schedule recurring task: ${(err as Error).message}`;
     }
@@ -45,25 +51,38 @@ const scheduleRecurringTask = tool(
   {
     name: "schedule_recurring_task",
     description:
-      "Schedules a task that repeats. The prompt runs in a fresh " +
-      "conversation each time, so it must be self-contained.",
+      "Schedules something that repeats on a fixed schedule, e.g. 'every " +
+      "morning at 9, check if postgres is running'. Each time it fires, you " +
+      "receive the prompt as a new task. For a one-off reminder, use " +
+      "schedule_task instead.",
     schema: z.object({
-      prompt: z.string().describe("The full instruction to run each time."),
+      prompt: z
+        .string()
+        .describe(
+          'A full sentence saying what to do when the task fires, starting with a verb. Good: "Tell the user it\'s time to drink water." Bad: "drink water" or "Remind the user to drink water." It runs in a new conversation with no memory of this one, so include every detail needed.',
+        ),
       interval: z
         .string()
         .describe(
-          "A cron expression or interval, e.g. '0 9 * * *' or '30 minutes'",
+          "How often: a cron expression like '0 9 * * *' (every day at 09:00) or '*/30 * * * *' (every 30 minutes), or an interval like '30 minutes' or '2 hours'.",
         ),
     }),
   },
 );
 
 const listScheduledTasks = tool(
-  async () => JSON.stringify(await listTasks(), null, 2),
+  async () => {
+    const tasks = await listTasks();
+    return tasks.length > 0
+      ? JSON.stringify(tasks, null, 2)
+      : "No tasks are scheduled.";
+  },
   {
     name: "list_scheduled_tasks",
     description:
-      "Lists every scheduled task with its ID, prompt and next run time.",
+      "Lists every scheduled task: its ID, prompt, next run time and repeat " +
+      "interval. Use it to answer 'what's scheduled?', or to find a task's " +
+      "ID before cancelling it or showing its runs.",
     schema: z.object({}),
   },
 );
@@ -72,13 +91,17 @@ const cancelScheduledTask = tool(
   async ({ id }) =>
     (await cancelTask(id))
       ? `Cancelled task ${id}.`
-      : `No task found with ID ${id}.`,
+      : `No task found with ID ${id}. Call list_scheduled_tasks to see the current IDs.`,
   {
     name: "cancel_scheduled_task",
     description:
-      "Cancels a scheduled task by ID. Use list_scheduled_tasks to find IDs.",
+      "Cancels a scheduled task so it never runs again. Needs the task's ID: " +
+      "call list_scheduled_tasks first if you don't have it. If several " +
+      "tasks could match what the user means, ask which one.",
     schema: z.object({
-      id: z.string().describe("The task ID from list_scheduled_tasks"),
+      id: z
+        .string()
+        .describe("The task ID exactly as list_scheduled_tasks returned it."),
     }),
   },
 );
@@ -86,21 +109,31 @@ const cancelScheduledTask = tool(
 const showScheduledTaskRuns = tool(
   async ({ jobId, limit }) => {
     const runs = await getRecentRuns(jobId, limit);
-    return JSON.stringify(runs, null, 2);
+    return runs.length > 0
+      ? JSON.stringify(runs, null, 2)
+      : "No runs found. The task may not have fired yet.";
   },
   {
     name: "show_scheduled_task_runs",
     description:
-      "Shows the most recent runs of a scheduled task, optionally filtered by job ID.",
+      "Shows past runs of scheduled tasks, newest first: when each ran, " +
+      "whether it succeeded, and what it produced. Use it for questions like " +
+      "'did my backup check run?' or 'what did the 9am task say?'. Leave " +
+      "jobId out to see runs of all tasks.",
     schema: z.object({
-      jobId: z.string().optional().describe("The job ID to filter by."),
+      jobId: z
+        .string()
+        .optional()
+        .describe(
+          "Only show runs of this task ID, from list_scheduled_tasks. Leave out for all tasks.",
+        ),
       limit: z
         .number()
         .int()
         .min(1)
         .max(100)
         .default(10)
-        .describe("The maximum number of runs to return."),
+        .describe("How many runs to return, 1 to 100. Defaults to 10."),
     }),
   },
 );

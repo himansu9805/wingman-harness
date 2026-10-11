@@ -149,14 +149,24 @@ export class GraphMemory {
     );
     if (rows.length === 0) return "";
 
-    const lines = rows.map((r) => `- ${r.name} (${r.type})`);
+    // Names grouped under their type, one per line with nothing else on it,
+    // so a small model copies just the name into recall_memory.
+    const byType = new Map<string, string[]>();
+    for (const row of rows) {
+      const type = String(row.type);
+      byType.set(type, [...(byType.get(type) ?? []), String(row.name)]);
+    }
+    const sections = [...byType].map(
+      ([type, names]) => `${type}:\n${names.map((n) => `- ${n}`).join("\n")}`,
+    );
     return [
-      "You have long-term memory about the following entities. Call",
-      "recall_memory with an exact name from this list to load full",
-      "details and connections for that entity before answering",
-      "questions about it.",
+      "# Memory",
+      "Long-term memory holds facts about the names below. Only the names are",
+      "shown here. To see the facts, call recall_memory with one name copied",
+      "exactly as written (without the leading '- '). Don't guess facts from",
+      "the names alone.",
       "",
-      ...lines,
+      ...sections,
     ].join("\n");
   }
 
