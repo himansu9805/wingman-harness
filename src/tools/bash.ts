@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tool } from "@langchain/core/tools";
+import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
-import { confirm } from "@/core/confirm";
 import { parse } from "shell-quote";
 
 const execFilePromise = promisify(execFile);
@@ -13,6 +13,11 @@ const RULESET = {
   allow: ["docker ps", "docker ps *", "git status", "git log *", "ls *", "pwd"],
   deny: ["rm *", "sudo *", "shutdown *", "reboot *", "kill *", "killall *"],
 };
+
+export interface CommandApproval {
+  kind: "bash_approval";
+  command: string;
+}
 
 /**
  * Splits a command into argv without a shell.
@@ -75,15 +80,20 @@ const executeBashCommand = tool(
           "it or a variant. Tell the user it is blocked.",
       });
     }
-    if (
-      verdict === "ask" &&
-      !(await confirm(` ▶️ Execute command: "${command}"? [y/N]: `))
-    ) {
-      return JSON.stringify({
-        error:
-          "Declined: the user chose not to run this command. Don't retry it. " +
-          "Ask the user how they'd like to proceed.",
+    if (verdict === "ask") {
+      // Pauses the run here. On resume the tool reruns from the top, and
+      // interrupt() returns the value passed to Command({ resume }).
+      const approved = interrupt<CommandApproval, boolean>({
+        kind: "bash_approval",
+        command,
       });
+      if (!approved) {
+        return JSON.stringify({
+          error:
+            "Declined: the user chose not to run this command. Don't retry it. " +
+            "Ask the user how they'd like to proceed.",
+        });
+      }
     }
     const [file, ...args] = argv;
     try {

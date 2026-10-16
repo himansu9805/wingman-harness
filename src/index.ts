@@ -9,9 +9,16 @@ import { MEMORY_TOOL_NAMES } from "@/tools/tools";
 import { closeScheduler, startScheduler } from "@/scheduler/scheduler";
 import type { ScheduledEvent } from "@/scheduler/interfaces";
 import { recordRun } from "./scheduler/results";
-import { setConfirmer } from "@/core/confirm";
+import { Command, type Interrupt } from "@langchain/langgraph";
+import type { CommandApproval } from "@/tools/bash";
 
 const THREAD_ID = "cli-session-1";
+
+type TurnInput = { messages: HumanMessage[] } | Command;
+type TurnResult =
+  | { kind: "done"; text: string }
+  | { kind: "paused"; interrupts: Interrupt<CommandApproval>[] };
+type Decide = (request: CommandApproval) => Promise<boolean>;
 
 let shutdownPromise: Promise<void> | null = null;
 let turnQueue: Promise<unknown> = Promise.resolve();
@@ -75,30 +82,39 @@ async function readInput(rl: readline.Interface): Promise<string | null> {
 }
 
 /**
- * Streams one agent turn, printing tool calls as they happen and the final reply.
+ * Streams one agent turn, printing tool calls as they happen. Stops early if
+ * a tool pauses the run to ask for approval.
  *
  * @param agent The agent to run.
- * @param input The user's message.
+ * @param input The user's message, or a `Command` resuming a paused run.
+ * @param threadId The conversation to run in.
  * @param signal Aborts the turn when triggered.
+ * @returns The final reply, or the approval requests the run paused on.
  */
 async function runTurn(
   agent: Agent,
-  input: string,
+  input: TurnInput,
   threadId: string,
   signal: AbortSignal,
-) {
-  const stream = await agent.app.stream(
-    { messages: [new HumanMessage(input)] },
-    {
-      configurable: { thread_id: threadId },
-      streamMode: "updates",
-      signal,
-    },
-  );
+): Promise<TurnResult> {
+  const stream = await agent.app.stream(input, {
+    configurable: { thread_id: threadId },
+    streamMode: "updates",
+    signal,
+  });
 
   let finalMessage: AIMessage | undefined;
+  const interrupts: Interrupt<CommandApproval>[] = [];
 
   for await (const update of stream) {
+    const pending = (update as Record<string, unknown>).__interrupt__ as
+      | Interrupt<CommandApproval>[]
+      | undefined;
+    if (pending) {
+      interrupts.push(...pending);
+      continue;
+    }
+
     const route =
       update["TypeSafeModelRouterMiddleware.before_agent"]?.modelRoute;
     if (route) {
@@ -120,10 +136,65 @@ async function runTurn(
     }
   }
 
+  if (interrupts.length > 0) return { kind: "paused", interrupts };
   // `.text` flattens Responses API content blocks and plain strings alike.
-  const text = finalMessage?.text || "(no response)";
-  console.log(`● ${text}\n`);
-  return text;
+  return { kind: "done", text: finalMessage?.text || "(no response)" };
+}
+
+/**
+ * Runs a turn, answering each approval request with `decide` and resuming
+ * until the model gives a final reply, which it prints.
+ *
+ * @param agent The agent to run.
+ * @param input The user's message.
+ * @param threadId The conversation to run in.
+ * @param signal Aborts the turn when triggered.
+ * @param decide Answers one approval request.
+ * @returns The final reply.
+ */
+async function runUntilDone(
+  agent: Agent,
+  input: TurnInput,
+  threadId: string,
+  signal: AbortSignal,
+  decide: Decide,
+): Promise<string> {
+  let next = input;
+  while (true) {
+    const result = await runTurn(agent, next, threadId, signal);
+    if (result.kind === "done") {
+      console.log(`● ${result.text}\n`);
+      return result.text;
+    }
+    // Keyed by interrupt id, so parallel tool calls each get their own answer.
+    const answers: Record<string, boolean> = {};
+    for (const it of result.interrupts) {
+      answers[it.id!] = await decide(it.value!);
+    }
+    next = new Command({ resume: answers });
+  }
+}
+
+/**
+ * Declines any approval left pending by an aborted turn. Otherwise the
+ * thread ends in tool calls with no results, which the model API rejects.
+ *
+ * @param agent The agent to run.
+ * @param threadId The conversation to clean up.
+ * @param signal Aborts the cleanup when triggered.
+ */
+async function declinePending(
+  agent: Agent,
+  threadId: string,
+  signal: AbortSignal,
+) {
+  const state = await agent.app.graph.getState({
+    configurable: { thread_id: threadId },
+  });
+  const pending = state.tasks.flatMap((t) => t.interrupts ?? []);
+  if (pending.length === 0) return;
+  const answers = Object.fromEntries(pending.map((it) => [it.id!, false]));
+  await runTurn(agent, new Command({ resume: answers }), threadId, signal);
 }
 
 /**
@@ -152,30 +223,29 @@ async function main() {
     }
   });
 
-  // True during scheduled turns: nobody may be at the terminal, and the "> "
-  // question is still pending, so tool confirmations are denied outright.
-  let unattended = false;
-
-  // Tools ask through the main interface; a second readline on stdin would
+  // Asks through the main interface; a second readline on stdin would
   // double-echo keys and pause stdin when it closes, freezing the prompt.
-  setConfirmer(async (question) => {
-    if (unattended) return false;
-    try {
-      const answer = await rl.question(question, {
-        signal: turnController?.signal, // Ctrl+C cancels the prompt with the turn
-      });
+  // Ctrl+C rejects the question, which aborts the turn; the next turn then
+  // declines whatever was left pending.
+  const askAtTerminal =
+    (signal: AbortSignal): Decide =>
+    async ({ command }) => {
+      const answer = await rl.question(
+        ` ▶️ Execute command: "${command}"? [y/N]: `,
+        { signal },
+      );
       return ["y", "yes"].includes(answer.trim().toLowerCase());
-    } catch {
-      return false; // aborted or closed counts as "no"
-    }
-  });
+    };
+
+  // Scheduled turns: nobody may be at the terminal, and the "> " question is
+  // still pending, so approvals are declined outright.
+  const declineAll: Decide = async () => false;
 
   const runScheduledTurn = (event: ScheduledEvent) =>
     enqueueTurn(async () => {
       if (atPrompt) stdout.write("\r\x1b[K"); // clear the "> " line
       console.log(`⏰ scheduled task ${event.jobId}: ${event.prompt}`);
       turnController = new AbortController();
-      unattended = true;
       const startedAt = new Date();
       try {
         // Without this framing, a firing "remind me…" prompt reads like a new
@@ -190,11 +260,13 @@ async function main() {
           `action you can't do in your reply. Don't schedule, list or cancel ` +
           `tasks. Nobody may be at the keyboard, so commands that need ` +
           `approval will be declined.`;
-        const output = await runTurn(
+        await declinePending(agent, event.threadId, turnController.signal);
+        const output = await runUntilDone(
           agent,
-          message,
+          { messages: [new HumanMessage(message)] },
           event.threadId,
           turnController.signal,
+          declineAll,
         );
         await recordRun({
           ...event,
@@ -219,7 +291,6 @@ async function main() {
         throw err;
       } finally {
         turnController = null;
-        unattended = false;
         if (atPrompt) rl.prompt(true); // redraw "> " and whatever was typed
       }
     });
@@ -244,7 +315,15 @@ async function main() {
       await enqueueTurn(async () => {
         turnController = new AbortController();
         try {
-          await runTurn(agent, input, THREAD_ID, turnController.signal);
+          const { signal } = turnController;
+          await declinePending(agent, THREAD_ID, signal);
+          await runUntilDone(
+            agent,
+            { messages: [new HumanMessage(input)] },
+            THREAD_ID,
+            signal,
+            askAtTerminal(signal),
+          );
         } catch (err) {
           if (turnController.signal.aborted) {
             console.log("\n● [interrupted]\n");
