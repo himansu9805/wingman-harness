@@ -1,8 +1,8 @@
 import { Agenda } from "agenda";
 import { PostgresBackend } from "@agendajs/postgres-backend";
-import { settings } from "@/settings";
-import type { AgentTaskData, JobDispatcher } from "@/scheduler/interfaces";
-import { AGENT_TASK_JOB, defineJobs } from "@/scheduler/jobs";
+import { settings } from "../settings";
+import type { AgentTaskData, JobDispatcher } from "./interfaces";
+import { AGENT_TASK_JOB, defineJobs } from "./jobs";
 
 let agenda: Agenda | null = null;
 let started = false;

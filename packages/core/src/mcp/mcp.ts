@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { settings } from "@/settings";
+import { settings } from "../settings";
 
 interface McpConfig {
   mcpServers?: Record<string, unknown>;

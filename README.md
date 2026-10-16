@@ -50,10 +50,22 @@ OLLAMA_MODEL=<name_of_model>
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
+## Layout
+
+An npm workspaces monorepo:
+
+- `packages/core` (`@wingman/core`): the agent, tools, skills, MCP,
+  memory and scheduler.
+- `apps/cli` (`@wingman/cli`): the terminal chat loop.
+
+`.env`, `skills/`, `mcp.config.json` and `memory.lbug` stay at the repo
+root and are shared by every app. Set `WINGMAN_HOME` to keep them
+somewhere else.
+
 ## Run it
 
 ```bash
-npm run dev
+npm run dev:cli
 ```
 
 Things worth trying:
@@ -71,7 +83,7 @@ To build a standalone bundle instead of running through `tsx`:
 
 ```bash
 npm run build
-npm start
+npm start -w @wingman/cli
 ```
 
 ## Memory

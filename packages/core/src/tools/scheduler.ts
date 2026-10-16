@@ -5,8 +5,8 @@ import {
   listTasks,
   scheduleOnce,
   scheduleRecurring,
-} from "@/scheduler/scheduler";
-import { getRecentRuns } from "@/scheduler/results";
+} from "../scheduler/scheduler";
+import { getRecentRuns } from "../scheduler/results";
 
 const scheduleTask = tool(
   async ({ prompt, when }) => {

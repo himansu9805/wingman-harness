@@ -1,6 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { modelRouterMiddleware } from "@langchain/typesafe/middleware";
-import { settings } from "@/settings";
+import { settings } from "../settings";
 
 /**
  * Creates a chat model for OpenAI or any OpenAI-compatible server (Ollama).

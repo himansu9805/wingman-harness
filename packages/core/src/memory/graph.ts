@@ -1,5 +1,5 @@
 import lbug, { type LbugValue } from "@ladybugdb/core";
-import { settings } from "@/settings";
+import { settings } from "../settings";
 
 type Connection = InstanceType<typeof lbug.Connection>;
 

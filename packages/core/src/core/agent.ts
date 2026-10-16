@@ -1,9 +1,9 @@
 import { createAgent, dynamicSystemPromptMiddleware } from "langchain";
 import { MemorySaver } from "@langchain/langgraph";
-import { tools as localTools } from "@/tools/tools";
-import { renderSkillIndex } from "@/skills/skills";
-import { loadMcpTools } from "@/mcp/mcp";
-import { GraphMemory } from "@/memory/graph";
+import { tools as localTools } from "../tools/tools";
+import { renderSkillIndex } from "../skills/skills";
+import { loadMcpTools } from "../mcp/mcp";
+import { GraphMemory } from "../memory/graph";
 import { strongModel, modelRouter } from "./router";
 import { buildSystemPrompt } from "./prompt";
 

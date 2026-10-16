@@ -1,6 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { GraphMemory } from "@/memory/graph";
+import { GraphMemory } from "../memory/graph";
 
 const graphMemory = GraphMemory.getInstance();
 

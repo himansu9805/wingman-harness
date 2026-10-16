@@ -1,10 +1,10 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { loadSkillContent } from "@/skills/skills";
-import { settings } from "@/settings";
-import { memoryTools } from "@/tools/memory";
-import { schedulerTools } from "@/tools/scheduler";
-import { bashTools } from "@/tools/bash";
+import { loadSkillContent } from "../skills/skills";
+import { settings } from "../settings";
+import { memoryTools } from "./memory";
+import { schedulerTools } from "./scheduler";
+import { bashTools } from "./bash";
 
 /**
  * Loads the complete instructions for a named skill.

@@ -1,6 +1,6 @@
 import pg from "pg";
-import { settings } from "@/settings";
-import { TaskRun } from "@/scheduler/interfaces";
+import { settings } from "../settings";
+import { TaskRun } from "./interfaces";
 
 let pool: pg.Pool | null = null;
 let ready: Promise<void> | null = null;

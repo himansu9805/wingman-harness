@@ -1,8 +1,17 @@
 import { config } from "dotenv";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-config();
+/**
+ * Where .env, skills/, mcp.config.json and memory.lbug live. Both
+ * src/settings.ts and dist/index.js sit two folders below the package, so
+ * three levels up is the repo root either way.
+ */
+const HOME =
+  process.env.WINGMAN_HOME ??
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+
+config({ path: join(HOME, ".env") });
 
 class Settings {
   readonly SKILLS_DIR: string;
@@ -20,8 +29,6 @@ class Settings {
   readonly FAST_MODEL_BASE_URL: string;
   readonly FAST_MODEL_NAME: string;
   readonly FAST_MODEL_API_KEY: string;
-
-  private readonly BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     const {
@@ -63,9 +70,9 @@ class Settings {
       );
     }
 
-    this.SKILLS_DIR = join(this.BASE_DIR, "..", "skills");
-    this.MCP_CONFIG_PATH = join(this.BASE_DIR, "..", "mcp.config.json");
-    this.GRAPH_DB_PATH = join(this.BASE_DIR, "..", "memory.lbug");
+    this.SKILLS_DIR = join(HOME, "skills");
+    this.MCP_CONFIG_PATH = join(HOME, "mcp.config.json");
+    this.GRAPH_DB_PATH = join(HOME, "memory.lbug");
     this.SCHEDULER_ENABLED = SCHEDULER_ENABLED === "true";
     this.POSTGRES_CONNECTION_STRING = "";
     if (this.SCHEDULER_ENABLED === true) {

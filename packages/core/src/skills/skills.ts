@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { load as parseYaml } from "js-yaml";
-import { settings } from "@/settings";
+import { settings } from "../settings";
 
 export interface SkillMeta {
   name: string;

@@ -1,5 +1,5 @@
 import type { Agenda, Job } from "agenda";
-import type { AgentTaskData, JobDispatcher, ScheduledEvent } from "@/scheduler/interfaces";
+import type { AgentTaskData, JobDispatcher, ScheduledEvent } from "./interfaces";
 
 export const AGENT_TASK_JOB = "agent-task";
 
