@@ -33,7 +33,7 @@ class Settings {
   constructor(env: NodeJS.ProcessEnv = process.env) {
     const {
       SCHEDULER_ENABLED,
-      POSTGRES_CONNECTION_STRING,
+      POSTGRES_CONNECTION_STRING = "",
       DECISIONS_MODEL_BASE_URL = "",
       DECISIONS_MODEL_NAME = "",
       DECISIONS_MODEL_API_KEY = "",
@@ -52,6 +52,7 @@ class Settings {
       STRONG_MODEL_NAME,
       FAST_MODEL_BASE_URL,
       FAST_MODEL_NAME,
+      POSTGRES_CONNECTION_STRING,
     };
 
     const missing = Object.entries(required)
@@ -64,20 +65,11 @@ class Settings {
       );
     }
 
-    if (SCHEDULER_ENABLED === "true" && !POSTGRES_CONNECTION_STRING) {
-      throw new Error(
-        `POSTGRES_CONNECTION_STRING is required when SCHEDULER_ENABLED=${SCHEDULER_ENABLED}`,
-      );
-    }
-
     this.SKILLS_DIR = join(HOME, "skills");
     this.MCP_CONFIG_PATH = join(HOME, "mcp.config.json");
     this.GRAPH_DB_PATH = join(HOME, "memory.lbug");
     this.SCHEDULER_ENABLED = SCHEDULER_ENABLED === "true";
-    this.POSTGRES_CONNECTION_STRING = "";
-    if (this.SCHEDULER_ENABLED === true) {
-      this.POSTGRES_CONNECTION_STRING = POSTGRES_CONNECTION_STRING!;
-    }
+    this.POSTGRES_CONNECTION_STRING = POSTGRES_CONNECTION_STRING ?? "";
     this.DECISIONS_MODEL_BASE_URL = DECISIONS_MODEL_BASE_URL;
     this.DECISIONS_MODEL_NAME = DECISIONS_MODEL_NAME;
     this.DECISIONS_MODEL_API_KEY = DECISIONS_MODEL_API_KEY;

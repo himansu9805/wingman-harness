@@ -1,20 +1,21 @@
 import { createAgent, dynamicSystemPromptMiddleware } from "langchain";
-import { MemorySaver } from "@langchain/langgraph";
 import { tools as localTools } from "../tools/tools";
 import { renderSkillIndex } from "../skills/skills";
 import { loadMcpTools } from "../mcp/mcp";
 import { GraphMemory } from "../memory/graph";
 import { strongModel, modelRouter } from "./router";
 import { buildSystemPrompt } from "./prompt";
+import { createCheckpointer } from "./checkpointer";
 
 /**
  * Builds the agent graph: routes each turn to a model, then loops
  * model → tools until the model answers.
  */
 async function buildAgentGraph() {
-  const [mcpTools, skillIndex] = await Promise.all([
+  const [mcpTools, skillIndex, checkpointer] = await Promise.all([
     loadMcpTools(),
     renderSkillIndex(),
+    createCheckpointer(),
   ]);
 
   return createAgent({
@@ -31,7 +32,7 @@ async function buildAgentGraph() {
         ),
       ),
     ],
-    checkpointer: new MemorySaver(),
+    checkpointer,
   });
 }
 

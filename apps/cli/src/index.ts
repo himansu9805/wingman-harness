@@ -1,5 +1,6 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { randomUUID } from "node:crypto";
 import {
   Agent,
   settings,
@@ -13,7 +14,8 @@ import {
   type TurnEvent,
 } from "@wingman/core";
 
-const THREAD_ID = "cli-session-1";
+/** One thread per CLI session; saved threads would otherwise grow forever. */
+const THREAD_ID = `cli-${randomUUID()}`;
 
 let turnQueue: Promise<unknown> = Promise.resolve();
 

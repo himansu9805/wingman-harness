@@ -21,6 +21,12 @@ export interface TurnOptions {
   onEvent?: (event: TurnEvent) => void;
 }
 
+/** A command waiting for the user's approval. */
+export interface PendingApproval {
+  id: string;
+  command: string;
+}
+
 type TurnInput = { messages: HumanMessage[] } | Command;
 
 export type TurnResult =
@@ -131,17 +137,16 @@ export async function runUntilDone(
   decide: Decide,
   options: TurnOptions,
 ): Promise<string> {
-  let next: TurnInput = { messages: [new HumanMessage(message)] };
-  while (true) {
-    const result = await runTurn(agent, next, threadId, options);
-    if (result.kind === "done") return result.text;
+  let result = await startTurn(agent, message, threadId, options);
+  while (result.kind === "paused") {
     // Keyed by interrupt id, so parallel tool calls each get their own answer.
     const answers: Record<string, boolean> = {};
     for (const it of result.interrupts) {
       answers[it.id!] = await decide(it.value!);
     }
-    next = new Command({ resume: answers });
+    result = await resumeTurn(agent, answers, threadId, options);
   }
+  return result.text;
 }
 
 /**
@@ -157,11 +162,50 @@ export async function declinePending(
   threadId: string,
   options: TurnOptions,
 ) {
+  const pending = await getPendingApprovals(agent, threadId);
+  if (pending.length === 0) return;
+  const answers = Object.fromEntries(pending.map((p) => [p.id, false]));
+  await resumeTurn(agent, answers, threadId, options);
+}
+
+/** Starts a turn from a user message; returns when it finishes or pauses. */
+export function startTurn(
+  agent: Agent,
+  message: string,
+  threadId: string,
+  options: TurnOptions,
+): Promise<TurnResult> {
+  return runTurn(
+    agent,
+    { messages: [new HumanMessage(message)] },
+    threadId,
+    options,
+  );
+}
+
+/**
+ * Resumes a paused turn with an answer for each pending approval.
+ *
+ * @param answers Approved or not, keyed by interrupt id.
+ */
+export function resumeTurn(
+  agent: Agent,
+  answers: Record<string, boolean>,
+  threadId: string,
+  options: TurnOptions,
+): Promise<TurnResult> {
+  return runTurn(agent, new Command({ resume: answers }), threadId, options);
+}
+
+/** Lists the commands a thread is paused on, if any. */
+export async function getPendingApprovals(
+  agent: Agent,
+  threadId: string,
+): Promise<PendingApproval[]> {
   const state = await agent.app.graph.getState({
     configurable: { thread_id: threadId },
   });
-  const pending = state.tasks.flatMap((t) => t.interrupts ?? []);
-  if (pending.length === 0) return;
-  const answers = Object.fromEntries(pending.map((it) => [it.id!, false]));
-  await runTurn(agent, new Command({ resume: answers }), threadId, options);
+  return state.tasks
+    .flatMap((t) => (t.interrupts ?? []) as Interrupt<CommandApproval>[])
+    .map((it) => ({ id: it.id!, command: it.value!.command }));
 }
