@@ -1,0 +1,18 @@
+meta {
+  name: Pending
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/threads/{{threadId}}/pending
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("200 with a list", () => {
+    expect(res.status).to.equal(200);
+    expect(res.getBody()).to.be.an("array");
+  });
+}

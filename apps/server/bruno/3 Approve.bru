@@ -1,0 +1,24 @@
+meta {
+  name: Approve
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/threads/{{threadId}}/resume
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "answers": { "{{approvalId}}": true }
+  }
+}
+
+tests {
+  test("finishes the turn", () => {
+    expect(res.status).to.equal(200);
+    expect(String(res.getBody())).to.contain("event: done");
+  });
+}

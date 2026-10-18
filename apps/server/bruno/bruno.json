@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "Wingman API",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"]
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Empty message
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/threads/{{threadId}}/messages
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "message": ""
+  }
+}
+
+tests {
+  test("400", () => {
+    expect(res.status).to.equal(400);
+  });
+}

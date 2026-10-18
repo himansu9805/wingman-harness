@@ -1,0 +1,39 @@
+meta {
+  name: Send message
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/threads/{{threadId}}/messages
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "message": "run uptime"
+  }
+}
+
+script:post-response {
+  // The body is an SSE stream: "event: <name>\ndata: <json>\n\n" blocks.
+  const body = res.getBody();
+  const text = typeof body === "string" ? body : JSON.stringify(body);
+  const match = text.match(/event: approval\ndata: (.*)/);
+  if (match) {
+    const { approvals } = JSON.parse(match[1]);
+    bru.setVar("approvalId", approvals[0].id);
+    console.log(`waiting for approval: ${approvals[0].command} (${approvals[0].id})`);
+  } else {
+    bru.setVar("approvalId", "");
+  }
+}
+
+tests {
+  test("streams a turn that ends in done or approval", () => {
+    expect(res.status).to.equal(200);
+    const text = String(res.getBody());
+    expect(/event: (done|approval)/.test(text)).to.equal(true);
+  });
+}

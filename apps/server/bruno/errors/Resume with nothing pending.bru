@@ -1,0 +1,23 @@
+meta {
+  name: Resume with nothing pending
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/threads/bruno-empty/resume
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "answers": { "x": true }
+  }
+}
+
+tests {
+  test("409", () => {
+    expect(res.status).to.equal(409);
+  });
+}
