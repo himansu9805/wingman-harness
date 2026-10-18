@@ -25,3 +25,6 @@ Thumbs.db
 # Databases
 *.lbug
 *.lbug.wal
+
+# Bruno environment
+bruno/

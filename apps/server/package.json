@@ -20,6 +20,7 @@
   "devDependencies": {
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.16.18",
-    "@types/express": "^5.0.0"
+    "@types/express": "^5.0.0",
+    "chokidar": "^5.0.0"
   }
 }
