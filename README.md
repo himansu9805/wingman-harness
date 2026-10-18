@@ -8,7 +8,7 @@ use it from a terminal or over a streaming HTTP API.
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![NestJS](https://img.shields.io/badge/NestJS-12-E0234E?logo=nestjs&logoColor=white)
-![License](https://img.shields.io/badge/license-ISC-blue)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ---
 
@@ -457,4 +457,11 @@ Issues and pull requests are welcome. Before opening a pull request:
 
 ## License
 
-Licensed under the ISC License.
+Copyright 2026 Himansu.
+
+Licensed under the [Apache License, Version 2.0](LICENSE). You may not use this
+project except in compliance with the License. Unless required by applicable
+law or agreed to in writing, software distributed under the License is
+distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+either express or implied. See the [LICENSE](LICENSE) and [NOTICE](NOTICE)
+files for details.

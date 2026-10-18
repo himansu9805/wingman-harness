@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -16,7 +17,6 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
   "devDependencies": {
     "@types/node": "^26.5.1",
     "tsup": "^8.5.0",
