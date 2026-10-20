@@ -1,4 +1,6 @@
 import "reflect-metadata";
+// Load the shared .env before constructing the token guard.
+import "@wingman/core";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { TokenGuard } from "./auth/token.guard";

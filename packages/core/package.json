@@ -9,12 +9,18 @@
       "types": "./dist/index.d.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./turns": {
+      "types": "./dist/turns.d.ts",
+      "development": "./src/turns.ts",
+      "default": "./dist/turns.js"
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --clean && tsc --emitDeclarationOnly",
-    "dev": "tsup src/index.ts --format esm --watch",
-    "typecheck": "tsc --noEmit"
+    "build": "tsup src/index.ts src/turns.ts --format esm --clean && tsc --emitDeclarationOnly",
+    "dev": "tsup src/index.ts src/turns.ts --format esm --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.*"
   },
   "dependencies": {
     "@agendajs/postgres-backend": "^3.0.6",

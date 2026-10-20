@@ -2,20 +2,21 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Inject,
   type OnApplicationShutdown,
   type OnModuleInit,
 } from "@nestjs/common";
 import {
-  Agent,
   declinePending,
   getPendingApprovals,
   resumeTurn,
-  shutdown,
   startTurn,
   type PendingApproval,
   type TurnOptions,
   type TurnResult,
-} from "@wingman/core";
+} from "@wingman/core/turns";
+import type { Agent } from "@wingman/core";
+import { AGENT_RUNTIME, type AgentRuntime } from "./agent.runtime";
 
 /** Owns the agent and runs at most one turn per thread at a time. */
 @Injectable()
@@ -23,12 +24,14 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
   private agent!: Agent;
   private readonly busy = new Set<string>();
 
+  constructor(@Inject(AGENT_RUNTIME) private readonly runtime: AgentRuntime) {}
+
   async onModuleInit() {
-    this.agent = await Agent.create();
+    this.agent = await this.runtime.create();
   }
 
   async onApplicationShutdown() {
-    await shutdown();
+    await this.runtime.close();
   }
 
   /**

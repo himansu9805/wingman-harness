@@ -166,6 +166,11 @@ before going further.
 
 ## Contributing
 
+Run `npm test` to test command rules, turn helpers, graph approvals and the HTTP
+API without external services. See [Automated tests](docs/testing.md) for suite
+details and focused commands. Tests run in the required CI job alongside the
+build and type-check.
+
 Run `npm run dev:server` from the repository root to develop the API. It builds
 core first, then watches both core and server source files. Saving changes in
 either package rebuilds the affected JavaScript and restarts the server. This
