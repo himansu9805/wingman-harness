@@ -42,10 +42,6 @@ export const tools = [
   ...(settings.SCHEDULER_ENABLED ? schedulerTools : []),
 ];
 
-export const MEMORY_TOOL_NAMES = new Set([
-  "remember",
-  "recall_memory",
-  "log_conversation",
-]);
+export { MEMORY_TOOL_NAMES } from "./names";
 
 export const SCHEDULER_TOOL_NAMES = new Set(schedulerTools.map((t) => t.name));

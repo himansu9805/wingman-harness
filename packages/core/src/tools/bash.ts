@@ -19,6 +19,33 @@ export interface CommandApproval {
   command: string;
 }
 
+/** Catches shell constructs that shell-quote otherwise preserves as text. */
+function hasUnsupportedSyntax(command: string): boolean {
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (char === "\\" && (!quote || /["$`\\\n]/.test(command[i + 1] ?? ""))) {
+      i++;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (!quote && (char === "'" || char === '"')) {
+      quote = char;
+      continue;
+    }
+    if (char === "`" || (char === "$" && command[i + 1] === "(")) return true;
+    if (!quote && char === "[" && command.indexOf("]", i + 1) !== -1) return true;
+  }
+  return false;
+}
+
 /**
  * Splits a command into argv without a shell.
  *
@@ -27,6 +54,7 @@ export interface CommandApproval {
  * redirects, globs) that can't be checked as a single command.
  */
 export function toArgv(command: string): string[] | null {
+  if (hasUnsupportedSyntax(command)) return null;
   const tokens = parse(command);
   if (!tokens.every((t): t is string => typeof t === "string")) return null;
   return tokens.length > 0 ? tokens : null;

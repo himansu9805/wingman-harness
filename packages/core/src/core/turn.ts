@@ -2,7 +2,7 @@ import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { Command, type Interrupt } from "@langchain/langgraph";
 import type { Agent } from "./agent";
 import type { CommandApproval } from "../tools/bash";
-import { MEMORY_TOOL_NAMES } from "../tools/tools";
+import { MEMORY_TOOL_NAMES } from "../tools/names";
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
@@ -165,7 +165,18 @@ export async function declinePending(
   const pending = await getPendingApprovals(agent, threadId);
   if (pending.length === 0) return;
   const answers = Object.fromEntries(pending.map((p) => [p.id, false]));
-  await resumeTurn(agent, answers, threadId, options);
+  let result = await resumeTurn(agent, answers, threadId, options);
+  let remainingRounds = 24;
+  while (result.kind === "paused") {
+    options.signal.throwIfAborted();
+    if (remainingRounds-- === 0) {
+      throw new Error("Approval cleanup exceeded 25 rounds; thread remains paused");
+    }
+    const declines = Object.fromEntries(
+      result.interrupts.map((it) => [it.id!, false]),
+    );
+    result = await resumeTurn(agent, declines, threadId, options);
+  }
 }
 
 /** Starts a turn from a user message; returns when it finishes or pauses. */
