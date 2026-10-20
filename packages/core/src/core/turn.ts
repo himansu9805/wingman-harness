@@ -6,7 +6,13 @@ import { MEMORY_TOOL_NAMES } from "../tools/names";
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
-  | { type: "route"; choice: string; confidence: number }
+  | {
+      type: "route";
+      choice: string;
+      confidence: number;
+      /** Raw classifier probabilities; optional for older route state. */
+      probabilities?: Record<string, number>;
+    }
   | { type: "skill"; name: string }
   | { type: "memory"; name: string; args: unknown }
   | { type: "tool_call"; name: string; args: unknown };
@@ -96,6 +102,7 @@ export async function runTurn(
         type: "route",
         choice: route.choice,
         confidence: route.confidence,
+        ...(route.probabilities ? { probabilities: route.probabilities } : {}),
       });
     }
 

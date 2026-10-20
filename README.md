@@ -107,6 +107,11 @@ The full walkthrough, including model choices and Postgres via Docker, is in
 Every setting is listed in
 [Configuration](https://github.com/himansu9805/wingman-harness/wiki/Configuration).
 
+The CLI shows the selected model and each route's probability, for example
+`fast — fast: 51.13%, powerful: 48.87%`. The API's `route` event preserves
+these probabilities and raw confidence. See [Routing diagnostics](docs/routing.md)
+for the difference between probability, confidence and classifier errors.
+
 ## Example
 
 Ask the API to run a command. It needs approval, so the stream ends by asking

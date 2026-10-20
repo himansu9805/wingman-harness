@@ -32,11 +32,8 @@ export const strongModel = createChatModel(
 /**
  * What the decision model is asked, per route.
  *
- * Tuned for tev1:0.8b on the cases in scripts/test-router.ts: no request
- * needing tools went to `fast`, and only 2 simple ones went to `powerful`.
- * Small wording changes swing the result a lot (e.g. dropping "current or
- * recent information" sends sports results and version questions to `fast`),
- * so run `npm run test:router` after any edit.
+ * Tuned for tev1:0.8b. Small wording changes can alter routing, so evaluate
+ * representative simple and tool-requiring requests after changing criteria.
  */
 export const ROUTE_INSTRUCTIONS = "Which model should handle this request?";
 export const ROUTE_CRITERIA = {

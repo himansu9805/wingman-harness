@@ -137,3 +137,16 @@ test('cleanup respects cancellation between successive pauses', async () => {
   })();
   await assert.rejects(declinePending(agent, 't', { signal: controller.signal }), /cleanup cancelled/);
 });
+
+for (const confidence of [0, 0.0003665156881398346, 0.8]) {
+  test(`route events preserve probabilities and raw confidence ${confidence}`, async () => {
+    const probabilities = { fast: 0.5112700443976795, powerful: 0.4887299556023205 };
+    const agent = streamed([
+      { 'TypeSafeModelRouterMiddleware.before_agent': { modelRoute: { choice: 'fast', confidence, probabilities } } },
+      reply('answer'),
+    ]);
+    const events = [];
+    await startTurn(agent, 'maths', 'route', { ...options(), onEvent: e => events.push(e) });
+    assert.deepEqual(events, [{ type: 'route', choice: 'fast', confidence, probabilities }]);
+  });
+}
