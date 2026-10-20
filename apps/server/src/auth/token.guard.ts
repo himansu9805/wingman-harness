@@ -3,6 +3,7 @@ import {
   type CanActivate,
   type ExecutionContext,
   Injectable,
+  UnauthorizedException,
 } from "@nestjs/common";
 import type { Request } from "express";
 
@@ -24,6 +25,10 @@ export class TokenGuard implements CanActivate {
     const header =
       context.switchToHttp().getRequest<Request>().headers.authorization ?? "";
     const given = header.startsWith("Bearer ") ? header.slice(7) : "";
-    return timingSafeEqual(digest(given), this.expected);
+    if (!timingSafeEqual(digest(given), this.expected)) {
+      throw new UnauthorizedException("Missing or invalid API token");
+    }
+
+    return true;
   }
 }
