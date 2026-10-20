@@ -6,8 +6,8 @@ Run all tests from the repository root:
 npm test
 ```
 
-The root command builds core (including its exported types), runs the core
-suites, compiles the server with SWC, and runs HTTP integration tests against
+The root command builds core (including its exported types), runs the core and
+CLI suites, compiles the server with SWC, and runs HTTP integration tests against
 that compiled server. No additional dependencies are needed: tests use
 Node's built-in `node:test`, assertions, `fetch`, and the existing `tsx` loader.
 
@@ -22,6 +22,7 @@ access when running them inside a sandbox.
 | `packages/core/tests/bash.test.ts` | Argument parsing, quoted literals, unsupported shell syntax, allow/deny/ask rules, exact and prefix matching |
 | `packages/core/tests/turn.test.mjs` | Event mapping, final answers, parallel and repeated interrupts, id-keyed decisions, cleanup, error and cancellation propagation |
 | `packages/core/tests/approval.test.mjs` | Real LangChain agent and LangGraph interrupts with `MemorySaver`: no execution before approval, decline, parallel calls, successive pauses and thread isolation |
+| `apps/cli/tests/route.test.mjs` | Routing probability percentages, zero confidence, tiny probabilities and older events without scores |
 | `apps/server/tests/http.test.mjs` | Actual Nest controllers, dependency injection and token guard over HTTP: validation, SSE, approvals, concurrency, cleanup, failures and disconnects |
 
 `tests/fixtures/approval-agent.mjs` supplies a deterministic chat model and an
@@ -37,6 +38,7 @@ From the repository root:
 node --import tsx --test packages/core/tests/bash.test.ts
 node --import tsx --test packages/core/tests/turn.test.mjs
 node --import tsx --test packages/core/tests/approval.test.mjs
+node --import tsx --test apps/cli/tests/route.test.mjs
 ```
 
 After building core at least once, run server tests with:

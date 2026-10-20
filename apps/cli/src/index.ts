@@ -1,6 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { randomUUID } from "node:crypto";
+import { formatRoute } from "./route";
 import {
   Agent,
   settings,
@@ -34,7 +35,7 @@ function enqueueTurn<T>(fn: () => Promise<T>): Promise<T> {
 function printEvent(event: TurnEvent) {
   switch (event.type) {
     case "route":
-      console.log(`  🧭 ${event.choice} (${event.confidence.toFixed(2)})`);
+      console.log(`  🧭 ${formatRoute(event)}`);
       break;
     case "skill":
       console.log(`  📘 skill used: ${event.name}`);

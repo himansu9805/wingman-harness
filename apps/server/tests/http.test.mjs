@@ -353,3 +353,16 @@ test('a new message declines all abandoned approval stages before running', { ti
   assert.deepEqual(await api.json('abandoned/pending'), []);
   assert.deepEqual(fixture.executions, []);
 });
+
+for (const confidence of [0, 0.0003665156881398346]) {
+  test(`SSE preserves route probabilities and raw confidence ${confidence}`, { timeout: TIMEOUT }, async (t) => {
+    const probabilities = { fast: 0.5112700443976795, powerful: 0.4887299556023205 };
+    const api = await server(t, fakeAgent(async function* () {
+      yield { 'TypeSafeModelRouterMiddleware.before_agent': { modelRoute: { choice: 'fast', confidence, probabilities } } };
+      yield doneUpdate();
+    }));
+    const frames = await api.stream('routing/messages', { message: 'maths' });
+    assert.deepEqual(frames[0], { type: 'route', data: { type: 'route', choice: 'fast', confidence, probabilities } });
+    terminal(frames, 'done');
+  });
+}
