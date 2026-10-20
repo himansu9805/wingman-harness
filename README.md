@@ -166,6 +166,15 @@ before going further.
 
 ## Contributing
 
+Run `npm run dev:server` from the repository root to develop the API. It builds
+core first, then watches both core and server source files. Saving changes in
+either package rebuilds the affected JavaScript and restarts the server. This
+keeps the server's compiled copy of core up to date while you work.
+
+Core's watcher rebuilds JavaScript only. After changing core's exported types,
+run `npm run build -w @wingman/core` to refresh its type declarations before
+type-checking the CLI or server.
+
 Issues and pull requests are welcome. `main` is protected: changes go through a
 pull request, and CI must build and type-check them. See
 [Development](https://github.com/himansu9805/wingman-harness/wiki/Development)
