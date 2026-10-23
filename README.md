@@ -109,7 +109,7 @@ Every setting is listed in
 
 The CLI shows the selected model and each route's probability, for example
 `fast — fast: 51.13%, powerful: 48.87%`. The API's `route` event preserves
-these probabilities and raw confidence. See [Routing diagnostics](docs/routing.md)
+these probabilities and raw confidence. See [Routing diagnostics](https://github.com/himansu9805/wingman-harness/wiki/Model-Routing)
 for the difference between probability, confidence and classifier errors.
 
 ## Example
@@ -165,12 +165,15 @@ data: {"text":"System uptime: 6 hours 38 minutes. Load averages: 1.80, 11.13, 17
 ```
 
 See [HTTP API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) for
-streaming events. See [Explicit thread API](docs/threads.md) for creation, listing,
+streaming events. See [Explicit thread API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) for creation, listing,
 history, deletion and the breaking change. A [Bruno](https://www.usebruno.com)
 collection lives in
 [`apps/server/bruno`](apps/server/bruno).
 
 ## Documentation
+
+Detailed documentation lives in the [wiki](https://github.com/himansu9805/wingman-harness/wiki)
+throughout pre-release development. A detailed `docs/` directory is planned for v1.0.0.
 
 | Topic | Page |
 | --- | --- |
@@ -192,7 +195,7 @@ before going further.
 ## Contributing
 
 Run `npm test` to test command rules, turn helpers, graph approvals and the HTTP
-API without external services. See [Automated tests](docs/testing.md) for suite
+API without external services. See [Automated tests](https://github.com/himansu9805/wingman-harness/wiki/Testing) for suite
 details and focused commands. Tests run in the required CI job alongside the
 build and type-check.
 
