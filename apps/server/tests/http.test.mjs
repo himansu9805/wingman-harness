@@ -14,6 +14,8 @@ import ThreadsControllerModule from '../dist/threads/threads.controller.js';
 const { ThreadsController } = ThreadsControllerModule;
 import TokenGuardModule from '../dist/auth/token.guard.js';
 const { TokenGuard } = TokenGuardModule;
+import repositoryModule from '../dist/threads/thread.repository.js';
+const { THREAD_REPOSITORY, MemoryThreadRepository } = repositoryModule;
 import { createApprovalAgent } from '../../../tests/fixtures/approval-agent.mjs';
 
 const TOKEN = 'http-integration-test-only';
@@ -40,7 +42,9 @@ async function bounded(promise, signal = AbortSignal.timeout(4_000)) {
   }
 }
 
-async function server(t, agent) {
+async function server(t, agent, options = {}) {
+  const store = options.store ?? new MemoryThreadRepository();
+  for (const id of ['auth', 'validation', 'fresh', 'approval', 'empty', 'parallel', 'twice', 'duplicate', 'busy', 'independent', 'failure', 'disconnect', 'abandoned', 'routing']) await store.create(id);
   const previous = process.env.WINGMAN_API_TOKEN;
   process.env.WINGMAN_API_TOKEN = TOKEN;
   let app;
@@ -62,7 +66,7 @@ async function server(t, agent) {
   class HttpTestModule {}
   Module({
     controllers: [ThreadsController],
-    providers: [AgentService, {
+    providers: [AgentService, { provide: THREAD_REPOSITORY, useValue: store }, {
       provide: AGENT_RUNTIME,
       useValue: { create: async () => agent, close: async () => { closed++; } },
     }],
@@ -72,12 +76,12 @@ async function server(t, agent) {
   await app.listen(0, '127.0.0.1');
   const base = await app.getUrl();
 
-  function request(path, { body, authorization = `Bearer ${TOKEN}`, signal } = {}) {
+  function request(path, { body, method, authorization = `Bearer ${TOKEN}`, signal } = {}) {
     const controller = new AbortController();
     requests.add(controller);
     // Keep the deadline active through response body consumption, including SSE.
     return fetch(`${base}/threads/${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: method ?? (body === undefined ? 'GET' : 'POST'),
       headers: {
         'content-type': 'application/json',
         ...(authorization === null ? {} : { authorization }),
@@ -102,7 +106,7 @@ async function server(t, agent) {
     assert.equal(response.headers.get('cache-control'), 'no-cache');
     return events(await response.text());
   }
-  return { request, json, stream };
+  return { request, json, stream, store };
 }
 
 function events(text) {
@@ -366,3 +370,223 @@ for (const confidence of [0, 0.0003665156881398346]) {
     terminal(frames, 'done');
   });
 }
+
+test('threads must be explicitly created; unknown ids never create catalogue rows', { timeout: TIMEOUT }, async (t) => {
+  const api = await server(t, createApprovalAgent().agent);
+  for (const path of ['never-created/messages', 'never-created/pending']) {
+    await api.json(path, path.endsWith('messages') ? { body: { message: 'hello' } } : undefined, 404);
+  }
+  await api.json('never-created/resume', { body: { answers: {} } }, 404);
+  assert.equal(await api.store.get('never-created'), null);
+  const { id } = await api.json('', { body: {} }, 201);
+  assert.match(id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(await api.json(`${id}/messages`), { messages: [], nextCursor: null });
+  assert.deepEqual(await api.json(`${id}/pending`), []);
+  terminal(await api.stream(`${id}/messages`, { message: '  first message  ' }), 'done');
+  terminal(await api.stream(`${id}/messages`, { message: 'second message' }), 'done');
+  assert.equal((await api.store.get(id)).title, 'first message');
+  assert.deepEqual((await api.json(`${id}/messages`)).messages.map(m => [m.role, m.text]), [
+    ['user', 'first message'], ['assistant', 'first message'], ['user', 'second message'], ['assistant', 'second message'],
+  ]);
+});
+
+test('catalogue lists bounded pages with stable timestamp/id ordering and hides deletion markers', { timeout: TIMEOUT }, async (t) => {
+  const store = new MemoryThreadRepository(() => new Date('2026-01-01T00:00:00.000Z'));
+  const api = await server(t, createApprovalAgent().agent, { store });
+  const first = await api.json('?limit=2');
+  assert.equal(first.threads.length, 2);
+  assert.equal(typeof first.nextCursor, 'string');
+  const second = await api.json(`?limit=2&cursor=${first.nextCursor}`);
+  assert.equal(second.threads.length, 2);
+  assert.equal(new Set([...first.threads, ...second.threads].map(r => r.id)).size, 4);
+  const ids = [...first.threads, ...second.threads].map(r => r.id);
+  assert.deepEqual(ids, [...ids].sort().reverse());
+  await store.markDeleting(first.threads[0].id);
+  assert.ok(!(await api.json('?limit=100')).threads.some(r => r.id === first.threads[0].id));
+  for (const query of ['?limit=0', '?limit=101', '?limit=no', '?cursor=not-json', '?cursor=%21', '?limit=2&limit=3']) {
+    await api.json(query, undefined, 400);
+  }
+});
+
+test('history attaches approved and declined tool output to the original call', { timeout: TIMEOUT }, async (t) => {
+  const { agent, executions } = createApprovalAgent();
+  const api = await server(t, agent);
+  const { id } = await api.json('', { body: {} }, 201);
+  const approval = terminal(await api.stream(`${id}/messages`, { message: 'run test' }), 'approval').approvals[0];
+  const pendingHistory = await api.json(`${id}/messages`);
+  const call = pendingHistory.messages.flatMap(m => m.toolCalls ?? [])[0];
+  assert.equal(call.name, 'test_action');
+  assert.equal(call.result, undefined);
+  terminal(await api.stream(`${id}/resume`, { answers: { [approval.id]: true } }), 'done');
+  const history = await api.json(`${id}/messages`);
+  const resolved = history.messages.flatMap(m => m.toolCalls ?? [])[0];
+  assert.equal(resolved.id, call.id);
+  assert.deepEqual(resolved.result, { output: 'executed test-1', truncated: false });
+  assert.ok(history.messages.every(m => ['user', 'assistant'].includes(m.role)));
+  assert.deepEqual(executions, ['test-1']);
+  const { id: denied } = await api.json('', { body: {} }, 201);
+  const paused = terminal(await api.stream(`${denied}/messages`, { message: 'run test' }), 'approval');
+  terminal(await api.stream(`${denied}/resume`, { answers: { [paused.approvals[0].id]: false } }), 'done');
+  assert.equal((await api.json(`${denied}/messages`)).messages.flatMap(m => m.toolCalls ?? [])[0].result.output, 'declined');
+  assert.deepEqual(executions, ['test-1']);
+});
+
+test('history pages remain chronological and pinned to their snapshot as new messages arrive', { timeout: TIMEOUT }, async (t) => {
+  const api = await server(t, createApprovalAgent().agent);
+  const { id } = await api.json('', { body: {} }, 201);
+  for (const message of ['first', 'second', 'third']) terminal(await api.stream(`${id}/messages`, { message }), 'done');
+  const latest = await api.json(`${id}/messages?limit=2`);
+  assert.deepEqual(latest.messages.map(m => m.text), ['third', 'third']);
+  assert.ok(latest.nextCursor);
+  terminal(await api.stream(`${id}/messages`, { message: 'fourth' }), 'done');
+  const earlier = await api.json(`${id}/messages?limit=2&cursor=${latest.nextCursor}`);
+  assert.deepEqual(earlier.messages.map(m => m.text), ['second', 'second']);
+  const oldest = await api.json(`${id}/messages?limit=2&cursor=${earlier.nextCursor}`);
+  assert.deepEqual(oldest.messages.map(m => m.text), ['first', 'first']);
+  assert.equal(oldest.nextCursor, null);
+  const { id: other } = await api.json('', { body: {} }, 201);
+  await api.json(`${other}/messages?cursor=${latest.nextCursor}`, undefined, 400);
+  await api.json(`${id}/messages?cursor=invalid`, undefined, 400);
+  await api.json(`${id}/messages?limit=101`, undefined, 400);
+});
+
+test('deleting a paused thread removes state without executing it, and deleted ids stay unknown', { timeout: TIMEOUT }, async (t) => {
+  const { agent, executions } = createApprovalAgent();
+  const api = await server(t, agent);
+  const { id } = await api.json('', { body: {} }, 201);
+  terminal(await api.stream(`${id}/messages`, { message: 'run test' }), 'approval');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const deleted = await api.request(id, { method: 'DELETE' });
+    assert.equal(deleted.status, 204);
+    assert.equal(await deleted.text(), '');
+  }
+  for (const path of [`${id}/messages`, `${id}/pending`]) await api.json(path, undefined, 404);
+  await api.json(`${id}/messages`, { body: { message: 'hello' } }, 404);
+  await api.json(`${id}/resume`, { body: { answers: {} } }, 404);
+  assert.equal((await api.store.get(id)), null);
+  assert.deepEqual(executions, []);
+  const snapshot = await agent.app.graph.getState({ configurable: { thread_id: id } });
+  assert.deepEqual(snapshot.tasks, []);
+  assert.ok(!snapshot.values.messages?.length);
+});
+
+test('thread deletion conflicts with an active turn', { timeout: TIMEOUT }, async (t) => {
+  const entered = deferred();
+  const release = deferred();
+  t.after(() => release.resolve());
+  const api = await server(t, fakeAgent(async function* (_input, options) {
+    entered.resolve();
+    await bounded(release.promise, options.signal);
+    yield doneUpdate();
+  }));
+  const running = api.stream('busy/messages', { message: 'hello' });
+  running.catch(() => {});
+  try {
+    await bounded(entered.promise);
+    await api.json('busy', { method: 'DELETE' }, 409);
+    assert.equal((await api.store.get('busy')).deleting, false);
+  } finally {
+    release.resolve();
+    terminal(await running, 'done');
+  }
+});
+
+test('failed deletion stays hidden and can be retried without allowing new writes', { timeout: TIMEOUT }, async (t) => {
+  const fixture = createApprovalAgent();
+  const saver = fixture.agent.app.graph.checkpointer;
+  const original = saver.deleteThread.bind(saver);
+  let fail = true;
+  saver.deleteThread = async id => {
+    if (fail) { fail = false; throw new Error('test delete failure'); }
+    return original(id);
+  };
+  const api = await server(t, fixture.agent);
+  const { id } = await api.json('', { body: {} }, 201);
+  terminal(await api.stream(`${id}/messages`, { message: 'hello' }), 'done');
+  await api.json(id, { method: 'DELETE' }, 500);
+  assert.equal((await api.store.get(id)).deleting, true);
+  assert.ok(!(await api.json('?limit=100')).threads.some(thread => thread.id === id));
+  await api.json(`${id}/messages`, { body: { message: 'hello' } }, 409);
+  await api.json(`${id}/pending`, undefined, 409);
+  const retry = await api.request(id, { method: 'DELETE' });
+  assert.equal(retry.status, 204);
+  await retry.text();
+  assert.equal(await api.store.get(id), null);
+});
+
+test('catalogue endpoints also require authentication', { timeout: TIMEOUT }, async (t) => {
+  const api = await server(t, createApprovalAgent().agent);
+  await api.json('', { authorization: null }, 401);
+  await api.json('', { body: {}, authorization: null }, 401);
+  await api.json('fresh', { method: 'DELETE', authorization: null }, 401);
+  await api.json('fresh/messages', { authorization: null }, 401);
+});
+
+test('metadata deletion can be retried after checkpoint deletion already succeeded', { timeout: TIMEOUT }, async (t) => {
+  const store = new MemoryThreadRepository();
+  const originalDelete = store.delete.bind(store);
+  let fail = true;
+  store.delete = async id => {
+    if (fail) { fail = false; throw new Error('metadata deletion failed'); }
+    return originalDelete(id);
+  };
+  const { agent, executions } = createApprovalAgent();
+  const api = await server(t, agent, { store });
+  const { id } = await api.json('', { body: {} }, 201);
+  terminal(await api.stream(`${id}/messages`, { message: 'run test' }), 'approval');
+  await api.json(id, { method: 'DELETE' }, 500);
+  assert.equal((await store.get(id)).deleting, true);
+  assert.deepEqual((await agent.app.graph.getState({ configurable: { thread_id: id } })).tasks, []);
+  await api.json(`${id}/resume`, { body: { answers: {} } }, 409);
+  const retry = await api.request(id, { method: 'DELETE' });
+  assert.equal(retry.status, 204);
+  await retry.text();
+  assert.equal(await store.get(id), null);
+  assert.deepEqual(executions, []);
+});
+
+test('new messages and duplicate deletes cannot race a deleting checkpoint', { timeout: TIMEOUT }, async (t) => {
+  const fixture = createApprovalAgent();
+  const entered = deferred();
+  const release = deferred();
+  const saver = fixture.agent.app.graph.checkpointer;
+  const original = saver.deleteThread.bind(saver);
+  t.after(() => release.resolve());
+  saver.deleteThread = async id => {
+    entered.resolve();
+    await bounded(release.promise);
+    return original(id);
+  };
+  const api = await server(t, fixture.agent);
+  const { id } = await api.json('', { body: {} }, 201);
+  const deleting = api.request(id, { method: 'DELETE' });
+  deleting.catch(() => {});
+  try {
+    await bounded(entered.promise);
+    await api.json(`${id}/messages`, { body: { message: 'hello' } }, 409);
+    await api.json(id, { method: 'DELETE' }, 409);
+    assert.equal((await api.store.get(id)).deleting, true);
+  } finally {
+    release.resolve();
+    const response = await deleting;
+    assert.equal(response.status, 204);
+    await response.text();
+  }
+  await api.json(`${id}/messages`, { body: { message: 'hello' } }, 404);
+});
+
+test('resuming a paused turn updates catalogue activity without replacing its title', { timeout: TIMEOUT }, async (t) => {
+  let clock = Date.parse('2026-01-01T00:00:00.000Z');
+  const store = new MemoryThreadRepository(() => new Date(clock++));
+  const api = await server(t, createApprovalAgent().agent, { store });
+  const { id } = await api.json('', { body: {} }, 201);
+  const created = await store.get(id);
+  const approval = terminal(await api.stream(`${id}/messages`, { message: 'run test' }), 'approval').approvals[0];
+  const paused = await store.get(id);
+  terminal(await api.stream(`${id}/resume`, { answers: { [approval.id]: false } }), 'done');
+  const resumed = await store.get(id);
+  assert.equal(resumed.title, 'run test');
+  assert.equal(resumed.createdAt, created.createdAt);
+  assert.ok(paused.updatedAt > created.updatedAt);
+  assert.ok(resumed.updatedAt > paused.updatedAt);
+});

@@ -1,16 +1,43 @@
-import { Body, Controller, Get, Param, Post, Res } from "@nestjs/common";
+import {
+  Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res,
+} from "@nestjs/common";
 import type { Response } from "express";
 import type { TurnOptions, TurnResult } from "@wingman/core";
 import { AgentService } from "../agent/agent.service";
 import { sseWriter } from "./sse";
-import { parse, ResumeBody, SendBody, ThreadId } from "./schemas";
+import {
+  parse, ResumeBody, SendBody, ThreadId, ListQuery, HistoryQuery,
+} from "./schemas";
 
-@Controller("threads/:threadId")
+@Controller("threads")
 export class ThreadsController {
   constructor(private readonly agent: AgentService) {}
 
+  @Post()
+  create() {
+    return this.agent.create();
+  }
+
+  @Get()
+  list(@Query() query: unknown) {
+    const { limit, cursor } = parse(ListQuery, query);
+    return this.agent.list(limit, cursor);
+  }
+
+  @Get(":threadId/messages")
+  messages(@Param("threadId") threadId: string, @Query() query: unknown) {
+    const { limit, cursor } = parse(HistoryQuery, query);
+    return this.agent.messages(parse(ThreadId, threadId), limit, cursor);
+  }
+
+  @Delete(":threadId")
+  @HttpCode(204)
+  async delete(@Param("threadId") threadId: string) {
+    await this.agent.delete(parse(ThreadId, threadId));
+  }
+
   /** Streams a turn: progress events, then `approval` or `done`. */
-  @Post("messages")
+  @Post(":threadId/messages")
   async send(
     @Param("threadId") threadId: string,
     @Body() body: unknown,
@@ -22,7 +49,7 @@ export class ThreadsController {
   }
 
   /** Answers pending approvals and streams the rest of the turn. */
-  @Post("resume")
+  @Post(":threadId/resume")
   async resume(
     @Param("threadId") threadId: string,
     @Body() body: unknown,
@@ -36,7 +63,7 @@ export class ThreadsController {
   }
 
   /** What the thread is waiting on, so the UI can recover after a reload. */
-  @Get("pending")
+  @Get(":threadId/pending")
   pending(@Param("threadId") threadId: string) {
     return this.agent.pending(parse(ThreadId, threadId));
   }

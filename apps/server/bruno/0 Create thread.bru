@@ -1,0 +1,29 @@
+meta {
+  name: Create thread
+  type: http
+  seq: 0
+}
+
+post {
+  url: {{baseUrl}}/threads
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {}
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setEnvVar("threadId", res.getBody().id);
+    bru.setVar("approvalId", "");
+  }
+}
+
+tests {
+  test("201 with a new thread id", () => {
+    expect(res.status).to.equal(201);
+    expect(res.getBody().id).to.be.a("string").and.not.empty;
+  });
+}

@@ -1,6 +1,6 @@
 # Automated tests
 
-Run all tests from the repository root:
+Run the default, service-free suites from the repository root:
 
 ```bash
 npm test
@@ -11,7 +11,7 @@ CLI suites, compiles the server with SWC, and runs HTTP integration tests agains
 that compiled server. No additional dependencies are needed: tests use
 Node's built-in `node:test`, assertions, `fetch`, and the existing `tsx` loader.
 
-Tests do not need `.env`, API keys, model endpoints, Postgres, LadybugDB or MCP
+The default suites do not need `.env`, API keys, model endpoints, Postgres, LadybugDB or MCP
 servers. HTTP tests listen on temporary loopback ports; allow localhost socket
 access when running them inside a sandbox.
 
@@ -22,8 +22,10 @@ access when running them inside a sandbox.
 | `packages/core/tests/bash.test.ts` | Argument parsing, quoted literals, unsupported shell syntax, allow/deny/ask rules, exact and prefix matching |
 | `packages/core/tests/turn.test.mjs` | Event mapping, final answers, parallel and repeated interrupts, id-keyed decisions, cleanup, error and cancellation propagation |
 | `packages/core/tests/approval.test.mjs` | Real LangChain agent and LangGraph interrupts with `MemorySaver`: no execution before approval, decline, parallel calls, successive pauses and thread isolation |
+| `packages/core/tests/history.test.mjs` | User-visible history, stable IDs, matching tool results, bounded previews and checkpoint deletion |
+| `apps/server/tests/thread.repository.test.mjs` | Thread metadata, first-message titles, keyset pagination and deletion markers in the test repository |
 | `apps/cli/tests/route.test.mjs` | Routing probability percentages, zero confidence, tiny probabilities and older events without scores |
-| `apps/server/tests/http.test.mjs` | Actual Nest controllers, dependency injection and token guard over HTTP: validation, SSE, approvals, concurrency, cleanup, failures and disconnects |
+| `apps/server/tests/http.test.mjs` | Actual Nest controllers, dependency injection and token guard over HTTP: validation, SSE, approvals, explicit creation, list/history pagination, deletion retries, concurrency, cleanup, failures and disconnects |
 
 `tests/fixtures/approval-agent.mjs` supplies a deterministic chat model and an
 approval tool whose only side effect is appending to an in-memory array. The
@@ -55,7 +57,7 @@ TypeScript through `tsx`: Nest needs the decorator metadata emitted by SWC.
 - Turn helpers import tool names without constructing tools or their databases.
 - `@wingman/core/turns` exposes turn operations without loading model settings or
   external resources. The server's injectable `AGENT_RUNTIME` owns agent
-  creation and shutdown; HTTP tests substitute only this runtime.
+  creation and shutdown; HTTP tests substitute this runtime and the catalogue repository. Existing scenario fixtures explicitly seed their named threads; tests of the public flow create threads through the API.
 - Each graph fixture gets a new in-memory checkpointer and execution log.
 - Each HTTP test gets its own Nest app on a port allocated by the operating system.
 - Tests restore the token environment variable and close the app after each case.
@@ -75,13 +77,28 @@ The initial failing tests exposed two mismatches with documented behaviour:
    respects cancellation and fails explicitly after 25 rounds rather than
    silently starting a new message on a paused thread.
 
+## Postgres integration
+
+A separate suite exercises a real Postgres repository and checkpointer. Set a
+connection string for an accessible test database, then run:
+
+```bash
+TEST_POSTGRES_CONNECTION_STRING=postgres://user:password@localhost:5432/database npm run test:postgres
+```
+
+The suite creates a uniquely named schema and removes it afterward. It verifies
+metadata and pending approvals after closing/reopening connections, resumed
+history, SQL pagination, retryable deletion markers and checkpoint cleanup.
+The database user needs permission to create schemas. This suite does not read
+`.env` or start Docker for you, and fails explicitly if the test URL is absent.
+
 ## CI
 
 The existing required **Build and type-check** job runs `npm ci`, builds all
-workspaces, type-checks them and runs `npm test`. Any failing suite fails the
+workspaces, type-checks them, runs `npm test`, then runs `npm run test:postgres`
+against a disposable Postgres 18 service. Any failing suite fails the
 required job. Keep its job name stable because the main-branch ruleset uses it.
 
-These tests cover deterministic application behaviour. Live-model quality,
-Postgres restart persistence, MCP connectivity and future browser flows need
-separate integration or evaluation suites; they are not prerequisites for
+These tests cover deterministic application behaviour. Live-model quality, MCP connectivity and future browser flows need
+separate evaluation suites; they are not prerequisites for
 running this suite locally or in CI.

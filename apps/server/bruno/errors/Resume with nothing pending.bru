@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/threads/bruno-empty/resume
+  url: {{baseUrl}}/threads/{{threadId}}/resume
   body: json
   auth: inherit
 }
@@ -20,4 +20,9 @@ tests {
   test("409", () => {
     expect(res.status).to.equal(409);
   });
+}
+
+docs {
+  Run 0 Create thread immediately before this request, before sending a message
+  or requesting approvals. A missing thread returns 404, not 409.
 }
