@@ -1,0 +1,162 @@
+name: Snyk
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snyk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    name: Snyk dependency scan
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    # Fork and Dependabot pull requests do not receive repository secrets.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check Snyk configuration
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -z "$SNYK_TOKEN" ]; then
+            echo "::error::Add SNYK_TOKEN under repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Install Snyk CLI
+        uses: snyk/actions/setup@11b673cfb4b0dc0d860a1323caa199d54950dcce
+        with:
+          snyk-version: v1.1308.3
+
+      # Include every npm workspace and development dependency. Fail on scan
+      # errors as well as high/critical vulnerabilities; do not suppress exits.
+      - name: Scan dependencies
+        id: scan
+        run: |
+          mkdir -p snyk-report
+          snyk test --all-projects --dev --fail-fast --severity-threshold=high \
+            --json-file-output=snyk-report/results.json \
+            --sarif-file-output=snyk-report/results.sarif
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+      - name: Summarize scan
+        if: ${{ !cancelled() && steps.scan.outcome != 'skipped' }}
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const lines = [
+            '# Snyk dependency report',
+            '',
+            `Commit: \`${process.env.GITHUB_SHA}\``,
+            `Scan step: **${process.env.SCAN_OUTCOME}**`,
+            '',
+            'Scope: all npm workspaces, including development dependencies. Only high and critical findings are reported.',
+            'Counts are unique vulnerability IDs per project, not dependency paths. A failed scan may indicate a scanner error; review the logs.',
+            '',
+          ];
+          const escape = value => String(value).replace(/[|\r\n<>]/g, ' ');
+          const path = 'snyk-report/results.json';
+          if (fs.existsSync(path)) {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const projects = Array.isArray(data) ? data : [data];
+            lines.push('| Project | High | Critical | Result |', '| --- | ---: | ---: | --- |');
+            for (const project of projects) {
+              const vulnerabilities = project.vulnerabilities ?? [];
+              const count = severity => new Set(vulnerabilities.filter(v => v.severity === severity).map(v => v.id)).size;
+              const error = project.error || project.ok === undefined;
+              lines.push(`| ${escape(project.displayTargetFile ?? project.projectName ?? project.path ?? 'Unknown')} | ${error ? '—' : count('high')} | ${error ? '—' : count('critical')} | ${error ? 'Scan error' : project.ok ? 'Passed' : 'Findings'} |`);
+            }
+          } else {
+            lines.push('No results file was produced. Review the scan logs; this is not a clean scan.');
+          }
+          lines.push('', 'Download **snyk-report** from this run’s artifacts and open **report.html** for vulnerability details and remediation guidance. JSON and SARIF are included when produced.');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/snyk-summary.md`, lines.join('\n') + '\n');
+          NODE
+
+      - name: Generate HTML report
+        if: ${{ !cancelled() && hashFiles('snyk-report/results.json') != '' }}
+        run: |
+          npm exec --yes --package=snyk-to-html@3.7.11 -- snyk-to-html \
+            -i snyk-report/results.json -o snyk-report/report.html
+
+      - name: Publish report files
+        id: report
+        if: ${{ !cancelled() && hashFiles('snyk-report/*') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: snyk-report
+          path: snyk-report/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish findings to GitHub Security
+        if: ${{ !cancelled() && hashFiles('snyk-report/results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: snyk-report/results.sarif
+          category: snyk-open-source
+
+      - name: Attach report to pull request
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v9
+        env:
+          REPORT_URL: ${{ steps.report.outputs.artifact-url }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const marker = '<!-- wingman-snyk-report -->';
+            const issue_number = context.issue.number;
+            const repo = context.repo;
+            const { data: pull } = await github.rest.pulls.get({ ...repo, pull_number: issue_number });
+            if (pull.head.sha !== context.payload.pull_request.head.sha) {
+              core.info('A newer commit exists; leaving its report comment unchanged.');
+              return;
+            }
+            const summaryPath = `${process.env.RUNNER_TEMP}/snyk-summary.md`;
+            const summary = fs.existsSync(summaryPath)
+              ? fs.readFileSync(summaryPath, 'utf8')
+              : '# Snyk dependency report\n\nNo summary was produced. Review the workflow logs; this is not a clean scan.';
+            const runUrl = `${context.serverUrl}/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`;
+            const reportLink = process.env.REPORT_URL
+              ? `[Download report bundle](${process.env.REPORT_URL}) — HTML, JSON and SARIF when generated. Retained for 30 days; GitHub sign-in required.`
+              : 'No report artifact is available. Review the workflow logs.';
+            const body = [marker, summary.slice(0, 50000), reportLink, '', `[View workflow run](${runUrl})`, `PR commit: \`${context.payload.pull_request.head.sha}\``].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number, per_page: 100 });
+            const previous = comments.find(comment => comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ ...repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...repo, issue_number, body });
+            }
