@@ -3,8 +3,8 @@ import { Command, type Interrupt } from "@langchain/langgraph";
 import type { Agent } from "./agent";
 import type { CommandApproval } from "../tools/bash";
 import { MEMORY_TOOL_NAMES } from "../tools/names";
+import { previewToolOutput } from "./tool-output";
 
-const MAX_TOOL_OUTPUT_LENGTH = 10_000;
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
@@ -90,17 +90,11 @@ function emitToolResults(
   for (const message of messages) {
     if (!ToolMessage.isInstance(message)) continue;
 
-    const output =
-      typeof message.content === "string"
-        ? message.content
-        : JSON.stringify(message.content);
-
     onEvent({
       type: "tool_result",
       name: message.name ?? "unknown",
       toolCallId: message.tool_call_id,
-      output: output.slice(0, MAX_TOOL_OUTPUT_LENGTH),
-      truncated: output.length > MAX_TOOL_OUTPUT_LENGTH,
+      ...previewToolOutput(message.content),
     });
   }
 }

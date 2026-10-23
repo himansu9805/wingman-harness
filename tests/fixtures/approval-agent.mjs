@@ -26,7 +26,7 @@ class ApprovalModel extends BaseChatModel {
 }
 
 /** A real agent/checkpointer with a harmless, observable tool side effect. */
-export function createApprovalAgent() {
+export function createApprovalAgent({ checkpointer = new MemorySaver() } = {}) {
   const executions = [];
   const action = tool(async ({ command }) => {
     const approved = interrupt({ kind: 'bash_approval', command });
@@ -34,5 +34,5 @@ export function createApprovalAgent() {
     executions.push(command);
     return `executed ${command}`;
   }, { name: 'test_action', description: 'Test action requiring approval', schema: z.object({ command: z.string() }) });
-  return { agent: { app: createAgent({ model: new ApprovalModel({}), tools: [action], checkpointer: new MemorySaver() }) }, executions };
+  return { agent: { app: createAgent({ model: new ApprovalModel({}), tools: [action], checkpointer }) }, executions };
 }

@@ -14,7 +14,8 @@
     "dev:cli": "npm run dev -w @wingman/cli",
     "dev:server": "npm run build -w @wingman/core && concurrently -k -n core,server \"npm run dev -w @wingman/core\" \"npm run dev -w @wingman/server\"",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run build -w @wingman/core && npm run test --workspaces --if-present"
+    "test": "npm run build -w @wingman/core && npm run test --workspaces --if-present",
+    "test:postgres": "npm run build -w @wingman/core && npm run test:postgres -w @wingman/server"
   },
   "keywords": [],
   "author": "",

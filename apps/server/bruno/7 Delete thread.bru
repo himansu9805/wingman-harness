@@ -1,0 +1,18 @@
+meta {
+  name: Delete thread
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/threads/{{threadId}}
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("204", () => {
+    expect(res.status).to.equal(204);
+
+  });
+}

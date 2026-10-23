@@ -114,11 +114,29 @@ for the difference between probability, confidence and classifier errors.
 
 ## Example
 
-Ask the API to run a command. It needs approval, so the stream ends by asking
+The HTTP API requires PostgreSQL via `POSTGRES_CONNECTION_STRING`, along with
+current model/classifier settings and `WINGMAN_API_TOKEN` shown above.
+Creating a thread is now explicit: arbitrary IDs no longer create conversations.
+First create one:
+
+```bash
+curl http://127.0.0.1:3000/threads \
+  -H "Authorization: Bearer $WINGMAN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+The response is `201 {"id":"..."}`. Copy the returned ID into this variable:
+
+```bash
+export THREAD_ID='<thread-id>'
+```
+
+Ask that thread to run a command. It needs approval, so the stream ends by asking
 for it:
 
 ```bash
-curl -N http://127.0.0.1:3000/threads/demo/messages \
+curl -N "http://127.0.0.1:3000/threads/$THREAD_ID/messages" \
   -H "Authorization: Bearer $WINGMAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"message": "run uptime"}'
@@ -132,10 +150,10 @@ event: approval
 data: {"approvals":[{"id":"3f332c5b18d1cacb8391e4722dd64e54","command":"uptime"}]}
 ```
 
-Approve it, and the turn finishes:
+Use the approval ID returned by your stream to approve it, and the turn finishes:
 
 ```bash
-curl -N http://127.0.0.1:3000/threads/demo/resume \
+curl -N "http://127.0.0.1:3000/threads/$THREAD_ID/resume" \
   -H "Authorization: Bearer $WINGMAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"answers": {"3f332c5b18d1cacb8391e4722dd64e54": true}}'
@@ -147,7 +165,9 @@ data: {"text":"System uptime: 6 hours 38 minutes. Load averages: 1.80, 11.13, 17
 ```
 
 See [HTTP API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) for
-every endpoint and event. A [Bruno](https://www.usebruno.com) collection lives in
+streaming events. See [Explicit thread API](docs/threads.md) for creation, listing,
+history, deletion and the breaking change. A [Bruno](https://www.usebruno.com)
+collection lives in
 [`apps/server/bruno`](apps/server/bruno).
 
 ## Documentation
