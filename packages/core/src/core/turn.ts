@@ -1,8 +1,10 @@
-import { AIMessage, HumanMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { Command, type Interrupt } from "@langchain/langgraph";
 import type { Agent } from "./agent";
 import type { CommandApproval } from "../tools/bash";
 import { MEMORY_TOOL_NAMES } from "../tools/names";
+
+const MAX_TOOL_OUTPUT_LENGTH = 10_000;
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
@@ -13,9 +15,16 @@ export type TurnEvent =
       /** Raw classifier probabilities; optional for older route state. */
       probabilities?: Record<string, number>;
     }
-  | { type: "skill"; name: string }
-  | { type: "memory"; name: string; args: unknown }
-  | { type: "tool_call"; name: string; args: unknown };
+  | { type: "skill"; name: string; toolCallId?: string }
+  | { type: "memory"; name: string; args: unknown; toolCallId?: string }
+  | { type: "tool_call"; name: string; args: unknown; toolCallId?: string }
+  | {
+      type: "tool_result";
+      name: string;
+      toolCallId: string;
+      output: string;
+      truncated: boolean;
+    };
 
 /** Answers one approval request. */
 export type Decide = (request: CommandApproval) => Promise<boolean>;
@@ -50,14 +59,49 @@ function emitToolCalls(
   onEvent: (event: TurnEvent) => void,
 ) {
   for (const call of message.tool_calls ?? []) {
+    const identity = call.id ? { toolCallId: call.id } : {};
+
     if (call.name === "load_skill") {
       const name = (call.args as { name?: string }).name ?? "?";
-      onEvent({ type: "skill", name });
+      onEvent({ type: "skill", name, ...identity });
     } else if (MEMORY_TOOL_NAMES.has(call.name)) {
-      onEvent({ type: "memory", name: call.name, args: call.args });
+      onEvent({
+        type: "memory",
+        name: call.name,
+        args: call.args,
+        ...identity,
+      });
     } else {
-      onEvent({ type: "tool_call", name: call.name, args: call.args });
+      onEvent({
+        type: "tool_call",
+        name: call.name,
+        args: call.args,
+        ...identity,
+      });
     }
+  }
+}
+
+/** Reports a bounded preview without changing the model's tool result. */
+function emitToolResults(
+  messages: unknown[],
+  onEvent: (event: TurnEvent) => void,
+) {
+  for (const message of messages) {
+    if (!ToolMessage.isInstance(message)) continue;
+
+    const output =
+      typeof message.content === "string"
+        ? message.content
+        : JSON.stringify(message.content);
+
+    onEvent({
+      type: "tool_result",
+      name: message.name ?? "unknown",
+      toolCallId: message.tool_call_id,
+      output: output.slice(0, MAX_TOOL_OUTPUT_LENGTH),
+      truncated: output.length > MAX_TOOL_OUTPUT_LENGTH,
+    });
   }
 }
 
@@ -104,6 +148,12 @@ export async function runTurn(
         confidence: route.confidence,
         ...(route.probabilities ? { probabilities: route.probabilities } : {}),
       });
+    }
+
+    const toolMessages = update.tools?.messages;
+
+    if (Array.isArray(toolMessages)) {
+      emitToolResults(toolMessages, onEvent);
     }
 
     const modelUpdate = update.model_request;
@@ -177,7 +227,9 @@ export async function declinePending(
   while (result.kind === "paused") {
     options.signal.throwIfAborted();
     if (remainingRounds-- === 0) {
-      throw new Error("Approval cleanup exceeded 25 rounds; thread remains paused");
+      throw new Error(
+        "Approval cleanup exceeded 25 rounds; thread remains paused",
+      );
     }
     const declines = Object.fromEntries(
       result.interrupts.map((it) => [it.id!, false]),
