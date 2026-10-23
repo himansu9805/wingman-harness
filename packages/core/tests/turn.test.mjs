@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AIMessage, HumanMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { runTurn, startTurn, resumeTurn, runUntilDone, getPendingApprovals, declinePending } from '../src/core/turn.ts';
 
 const options = () => ({ signal: new AbortController().signal });
@@ -45,9 +45,9 @@ test('runTurn emits route, tool, skill and memory events and consumes the whole 
   assert.equal((await startTurn(agent, 'hello', 't', { ...options(), onEvent: e => events.push(e) })).text, 'final');
   assert.deepEqual(events, [
     { type: 'route', choice: 'powerful', confidence: 0.8 },
-    { type: 'tool_call', name: 'exec_bash_command', args: { command: 'pwd' } },
-    { type: 'skill', name: 'haiku' },
-    { type: 'memory', name: 'recall_memory', args: { name: 'User' } },
+    { type: 'tool_call', name: 'exec_bash_command', args: { command: 'pwd' }, toolCallId: '1' },
+    { type: 'skill', name: 'haiku', toolCallId: '2' },
+    { type: 'memory', name: 'recall_memory', args: { name: 'User' }, toolCallId: '3' },
   ]);
 });
 
@@ -150,3 +150,21 @@ for (const confidence of [0, 0.0003665156881398346, 0.8]) {
     assert.deepEqual(events, [{ type: 'route', choice: 'fast', confidence, probabilities }]);
   });
 }
+
+
+test('tool updates emit each result with its call id before the final reply', async () => {
+  const agent = streamed([
+    { tools: { messages: [
+      new ToolMessage({ name: 'exec_bash_command', tool_call_id: 'call-1', content: 'first output' }),
+      new ToolMessage({ name: 'exec_bash_command', tool_call_id: 'call-2', content: 'second output' }),
+    ] } },
+    reply('finished'),
+  ]);
+  const events = [];
+  const result = await startTurn(agent, 'x', 't', { ...options(), onEvent: e => events.push(e) });
+  assert.deepEqual(events, [
+    { type: 'tool_result', name: 'exec_bash_command', toolCallId: 'call-1', output: 'first output', truncated: false },
+    { type: 'tool_result', name: 'exec_bash_command', toolCallId: 'call-2', output: 'second output', truncated: false },
+  ]);
+  assert.deepEqual(result, { kind: 'done', text: 'finished' });
+});

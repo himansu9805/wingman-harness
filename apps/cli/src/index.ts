@@ -48,6 +48,13 @@ function printEvent(event: TurnEvent) {
         `  🔧 tool called: ${event.name}(${JSON.stringify(event.args)})`,
       );
       break;
+    case "tool_result":
+      console.log(
+        `  ↳ ${event.name} [${event.toolCallId}]: ` +
+          `${event.output.length} characters` +
+          (event.truncated ? " (truncated)" : ""),
+      );
+      break;
   }
 }
 
@@ -80,6 +87,8 @@ async function main() {
   );
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
+  // Between questions, terminal redraws must not display readline's default "> ".
+  rl.setPrompt("");
   const agent = await Agent.create();
 
   // In a TTY, readline owns Ctrl+C (raw mode), so process-level SIGINT never
