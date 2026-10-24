@@ -86,7 +86,7 @@ export class ThreadsController {
     try {
       result = await run({
         signal: controller.signal,
-        onEvent: (event) => send(event.type, event),
+        onEvent: async (event) => { send(event.type, event); },
       });
     } catch (err) {
       if (!res.headersSent) throw err; // nothing streamed yet: normal HTTP error
