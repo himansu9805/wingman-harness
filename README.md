@@ -1,19 +1,30 @@
-# Wingman Harness
+<p align="center">
+  <img src="assets/branding/wingman-banner.png" alt="Wingman Harness — a pixel-art fighter plane on radar, with the tagline Always watching you six" width="100%">
+</p>
 
-A self-hosted AI agent harness that runs on your own machine and models.
-Wingman gives a tool-calling agent a shell (with human approval), on-demand
-skills, MCP servers, long-term graph memory and scheduled tasks, and lets you
-use it from a terminal or over a streaming HTTP API.
+<h1 align="center">Wingman Harness</h1>
 
-![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
-![NestJS](https://img.shields.io/badge/NestJS-12-E0234E?logo=nestjs&logoColor=white)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+<p align="center">
+  <strong>A self-hosted AI agent harness for your machine and your models.</strong><br>
+  Human-approved shell commands, skills, MCP tools, graph memory and scheduled tasks.<br>
+  Available through an interactive CLI and a streaming HTTP API.
+</p>
 
-**[Documentation](https://github.com/himansu9805/wingman-harness/wiki)** ·
-**[Getting Started](https://github.com/himansu9805/wingman-harness/wiki/Getting-Started)** ·
-**[HTTP API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API)** ·
-**[Roadmap](https://github.com/himansu9805/wingman-harness/wiki/Roadmap)**
+<p align="center">
+  <a href="https://github.com/himansu9805/wingman-harness/actions/workflows/ci.yml"><img src="https://github.com/himansu9805/wingman-harness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&amp;logoColor=white" alt="Node.js 22.12 or newer">
+  <img src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&amp;logoColor=white" alt="TypeScript 7">
+  <img src="https://img.shields.io/badge/NestJS-12-E0234E?logo=nestjs&amp;logoColor=white" alt="NestJS 12">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache 2.0"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/himansu9805/wingman-harness/wiki/Getting-Started">Getting started</a> ·
+  <a href="https://github.com/himansu9805/wingman-harness/wiki">Documentation</a> ·
+  <a href="https://github.com/himansu9805/wingman-harness/wiki/HTTP-API">HTTP API</a> ·
+  <a href="https://github.com/himansu9805/wingman-harness/wiki/Roadmap">Roadmap</a> ·
+  <a href="https://github.com/himansu9805/wingman-harness/issues">Report an issue</a>
+</p>
 
 ---
 
@@ -63,8 +74,7 @@ your approval and resume later, even after a restart. See
 ## Quick start
 
 You need **Node.js 22.12+**, an **OpenAI-compatible chat endpoint** (such as
-Ollama), a **TypeSafe-compatible classifier** for routing, and optionally
-**PostgreSQL**.
+Ollama), a **TypeSafe-compatible classifier** for routing, and **PostgreSQL**.
 
 ```bash
 git clone https://github.com/himansu9805/wingman-harness.git
@@ -85,7 +95,7 @@ FAST_MODEL_NAME=<fast-model>
 STRONG_MODEL_BASE_URL=http://localhost:11434/v1
 STRONG_MODEL_NAME=<strong-model>
 
-# Optional: keep conversations across restarts
+# Required: persist conversations and pending approvals
 POSTGRES_CONNECTION_STRING=postgres://user:password@localhost:5432/wingman
 
 # Required by the HTTP server
@@ -116,8 +126,7 @@ for the difference between probability, confidence and classifier errors.
 
 The HTTP API requires PostgreSQL via `POSTGRES_CONNECTION_STRING`, along with
 current model/classifier settings and `WINGMAN_API_TOKEN` shown above.
-Creating a thread is now explicit: arbitrary IDs no longer create conversations.
-First create one:
+Start by creating a conversation thread:
 
 ```bash
 curl http://127.0.0.1:3000/threads \
@@ -165,9 +174,8 @@ data: {"text":"System uptime: 6 hours 38 minutes. Load averages: 1.80, 11.13, 17
 ```
 
 See [HTTP API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) for
-streaming events. See [Explicit thread API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) for creation, listing,
-history, deletion and the breaking change. A [Bruno](https://www.usebruno.com)
-collection lives in
+streaming events, approvals, thread listing, history and deletion. A
+[Bruno](https://www.usebruno.com) collection lives in
 [`apps/server/bruno`](apps/server/bruno).
 
 ## Documentation
