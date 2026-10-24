@@ -1,5 +1,9 @@
+import { setTimeout as delay } from "node:timers/promises";
+import type { Response } from "express";
+import { eventFrame, writeSse } from "./sse";
+import { validateSequence } from "./thread-events.repository";
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Post, Query,
+  BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, Param, Post, Query, Res,
 } from "@nestjs/common";
 import { AgentService } from "../agent/agent.service";
 import {
@@ -31,6 +35,52 @@ export class ThreadsController {
   @HttpCode(204)
   async delete(@Param("threadId") threadId: string) {
     await this.agent.delete(parse(ThreadId, threadId));
+  }
+
+  /** Replays the journal and polls for new rows without a replay/live handoff gap. */
+  @Get(":threadId/events")
+  async events(@Param("threadId") rawId: string, @Headers("last-event-id") lastId: string | undefined, @Res() res: Response) {
+    const threadId = parse(ThreadId, rawId);
+    await this.agent.requireThread(threadId);
+    let cursor = "0";
+    if (lastId !== undefined) {
+      const prefix = `${threadId}:`;
+      if (!lastId.startsWith(prefix)) throw new BadRequestException("Event cursor belongs to another thread");
+      cursor = lastId.slice(prefix.length);
+      try { validateSequence(cursor); } catch { throw new BadRequestException("Invalid event cursor"); }
+      if (BigInt(cursor) > BigInt(await this.agent.events.latest(threadId))) throw new BadRequestException("Event cursor is ahead of this thread");
+    }
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.agent.shutdownSignal]);
+    const disconnect = () => controller.abort();
+    res.once("close", disconnect);
+    res.once("error", disconnect);
+    res.status(200).set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.flushHeaders();
+    let heartbeatAt = Date.now();
+    try {
+      while (!signal.aborted) {
+        try { await this.agent.requireThread(threadId); } catch { break; }
+        const rows = await this.agent.events.listAfter(threadId, cursor, 100);
+        for (const row of rows) {
+          await writeSse(res, eventFrame(row), signal);
+          cursor = row.sequence;
+        }
+        if (rows.length === 100) continue;
+        if (Date.now() - heartbeatAt >= 15_000) {
+          await writeSse(res, ": heartbeat\n\n", signal);
+          heartbeatAt = Date.now();
+        }
+        await delay(100, undefined, { signal });
+      }
+    } catch {
+      // The journal remains replayable after a disconnect or transport failure.
+      // End the connection so the client reconnects from its last received ID.
+    } finally {
+      controller.abort();
+      res.off("close", disconnect); res.off("error", disconnect);
+      res.end();
+    }
   }
 
   /** Accepts a turn; progress is delivered through the events endpoint. */

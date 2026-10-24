@@ -55,14 +55,19 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  async onApplicationShutdown() {
+  async beforeApplicationShutdown() {
     await this.runner.close();
+  }
+
+  async onApplicationShutdown() {
     try {
       await this.runtime.close();
     } finally {
       try { await this.events.close(); } finally { await this.threads.close(); }
     }
   }
+
+  get shutdownSignal(): AbortSignal { return this.runner.shutdownSignal; }
 
   async create() {
     const id = randomUUID();

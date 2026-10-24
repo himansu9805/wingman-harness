@@ -82,14 +82,14 @@ async function server(t, agent, options = {}) {
   await app.listen(0, '127.0.0.1');
   const base = await app.getUrl();
 
-  function request(path, { body, method, authorization = `Bearer ${TOKEN}`, signal } = {}) {
+  function request(path, { body, method, authorization = `Bearer ${TOKEN}`, signal, headers = {} } = {}) {
     const controller = new AbortController();
     requests.add(controller);
     // Keep the deadline active through response body consumption, including SSE.
     return fetch(`${base}/threads/${path}`, {
       method: method ?? (body === undefined ? 'GET' : 'POST'),
       headers: {
-        'content-type': 'application/json',
+        'content-type': 'application/json', connection: 'close', ...headers,
         ...(authorization === null ? {} : { authorization }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -110,20 +110,31 @@ async function server(t, agent, options = {}) {
     assert.equal(response.status, 202);
     const { runId } = await response.json();
     const threadId = path.split('/')[0];
+    const subscription = new AbortController();
+    const listener = await request(`${threadId}/events`, { signal: subscription.signal });
+    assert.equal(listener.status, 200);
+    assert.match(listener.headers.get('content-type'), /^text\/event-stream/);
+    const reader = listener.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
     const frames = [];
-    let cursor = '0';
-    while (true) {
-      const rows = await journal.listAfter(threadId, cursor, 100);
-      for (const row of rows) {
-        cursor = row.sequence;
-        if (row.runId !== runId) continue;
-        const { type, ...data } = row.payload;
-        frames.push({ type, data: ['done', 'approval', 'error'].includes(type) ? data : row.payload });
-        if (['done', 'approval', 'error'].includes(type)) return frames;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false, 'stream remains open across turns');
+        buffer += decoder.decode(chunk.value, { stream: true });
+        let end;
+        while ((end = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+          if (frame.startsWith(':')) continue;
+          const parsed = events(frame)[0];
+          if (parsed.data.runId !== runId) continue;
+          const { runId: ignored, type: payloadType, ...data } = parsed.data;
+          frames.push({ type: parsed.type, data: ['done', 'approval', 'error'].includes(parsed.type) ? data : { type: payloadType, ...data } });
+          if (['done', 'approval', 'error'].includes(parsed.type)) return frames;
+        }
       }
-      await bounded(new Promise(resolve => setTimeout(resolve, 10)));
-      t.signal.throwIfAborted();
-    }
+    } finally { subscription.abort(); await reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
   return { request, json, stream, store, journal };
 }
@@ -312,7 +323,7 @@ test('same-thread concurrent turns and resumes conflict while another thread can
 });
 
 for (const afterHeaders of [false, true]) {
-  test(`errors ${afterHeaders ? 'after headers become SSE errors' : 'before headers become HTTP 500'} and release the lock`, { timeout: TIMEOUT }, async (t) => {
+  test(`background errors ${afterHeaders ? 'after progress' : 'before progress'} are persisted and release the lock`, { timeout: TIMEOUT }, async (t) => {
     let attempts = 0;
     const api = await server(t, fakeAgent(async function* () {
       if (attempts++ === 0) {
@@ -592,4 +603,59 @@ test('resuming a paused turn updates catalogue activity without replacing its ti
   assert.equal(resumed.createdAt, created.createdAt);
   assert.ok(paused.updatedAt > created.updatedAt);
   assert.ok(resumed.updatedAt > paused.updatedAt);
+});
+
+test('SSE replays bounded pages, isolates thread cursors, and supports independent reconnects', { timeout: TIMEOUT }, async t => {
+  const api = await server(t, fakeAgent(async function* () { yield doneUpdate(); }));
+  const runId = '00000000-0000-4000-8000-000000000001';
+  for (let i = 0; i < 205; i++) await api.journal.append('fresh', runId, { type: 'done', text: String(i) });
+  for (const cursor of ['fresh:206', 'fresh:01', 'fresh:-1', 'fresh:9223372036854775808', 'approval:1', 'garbage']) {
+    await api.json('fresh/events', { headers: { 'last-event-id': cursor } }, 400);
+  }
+  await api.json('missing/events', undefined, 404);
+  await api.json('fresh/events', { authorization: null }, 401);
+  async function readCount(cursor, count) {
+    const response = await api.request('fresh/events', { headers: { 'last-event-id': `fresh:${cursor}` } });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    let text = '';
+    try {
+      while ((text.match(/event: done/g) ?? []).length < count) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false);
+        text += new TextDecoder().decode(chunk.value);
+      }
+      return [...text.matchAll(/^id: fresh:(\d+)$/gm)].map(m => Number(m[1]));
+    } finally { await reader.cancel(); }
+  }
+  const [all, reconnect] = await Promise.all([readCount(0, 205), readCount(200, 5)]);
+  assert.deepEqual(all, Array.from({ length: 205 }, (_, i) => i + 1));
+  assert.deepEqual(reconnect, [201, 202, 203, 204, 205]);
+});
+
+test('disconnecting an event subscriber preserves execution and replay finds the result', { timeout: TIMEOUT }, async t => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  let signal;
+  const api = await server(t, fakeAgent(async function* (_input, options) {
+    signal = options.signal;
+    yield progressUpdate();
+    await bounded(gate.promise);
+    yield doneUpdate();
+  }));
+  const { runId } = await api.json('disconnect/messages', { body: { message: 'hello' } }, 202);
+  const response = await api.request('disconnect/events');
+  const reader = response.body.getReader();
+  const chunk = await reader.read();
+  assert.match(new TextDecoder().decode(chunk.value), /event: route/);
+  await reader.cancel();
+  assert.equal(signal.aborted, false);
+  gate.resolve();
+  await bounded((async () => {
+    while (!(await api.journal.listAfter('disconnect', '0', 100)).some(row => row.runId === runId && row.payload.type === 'done')) await new Promise(resolve => setTimeout(resolve, 10));
+  })());
+  const replay = await api.request('disconnect/events', { headers: { 'last-event-id': 'disconnect:1' } });
+  const replayReader = replay.body.getReader();
+  try { assert.match(new TextDecoder().decode((await replayReader.read()).value), /event: done/); }
+  finally { await replayReader.cancel(); }
 });

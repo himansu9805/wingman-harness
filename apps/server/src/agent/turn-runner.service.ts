@@ -14,6 +14,8 @@ export class TurnRunner {
   private readonly busy = new Set<string>();
   private readonly active = new Map<string, ActiveRun>();
   private stopping = false;
+  private readonly shutdown = new AbortController();
+  get shutdownSignal(): AbortSignal { return this.shutdown.signal; }
 
   private reserve(threadId: string) {
     if (this.stopping) throw new ServiceUnavailableException("Server is shutting down");
@@ -53,6 +55,7 @@ export class TurnRunner {
 
   async close(): Promise<void> {
     this.stopping = true;
+    this.shutdown.abort();
     const runs = [...this.active.values()];
     for (const run of runs) run.controller.abort(new Error("Server is shutting down"));
     await Promise.allSettled(runs.map(run => run.completion));
