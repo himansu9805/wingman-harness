@@ -1,0 +1,9 @@
+variables:
+  - name: baseUrl
+    value: http://127.0.0.1:3000
+  - name: threadId
+    value: 97a78ea2-8370-4123-9681-6702af647ec4
+  - name: lastEventId
+    value: ""
+  - secret: true
+    name: token

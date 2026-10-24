@@ -1,0 +1,33 @@
+info:
+  name: Approve
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{baseUrl}}/threads/{{threadId}}/resume"
+  body:
+    type: json
+    data: |-
+      {
+        "answers": { "{{approvalId}}": true }
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: if (res.status === 202) bru.setVar("runId", res.getBody().runId);
+    - type: tests
+      code: |-
+        test("accepts a background turn", () => {
+          expect(res.status).to.equal(202);
+          expect(res.getBody().runId).to.be.a("string");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true

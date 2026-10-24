@@ -1,0 +1,24 @@
+info:
+  name: Replay events
+  type: http
+  seq: 9
+
+http:
+  method: GET
+  url: "{{baseUrl}}/threads/{{threadId}}/events"
+  headers:
+    - name: Last-Event-ID
+      value: "{{lastEventId}}"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Set lastEventId to a received id, for example <threadId>:2.
+  Replays events strictly after that id, then waits for new events.
+  The stream stays open. Cancel it manually when finished.
