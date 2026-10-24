@@ -18,6 +18,11 @@ import repositoryModule from '../dist/threads/thread.repository.js';
 const { THREAD_REPOSITORY, MemoryThreadRepository } = repositoryModule;
 import { createApprovalAgent } from '../../../tests/fixtures/approval-agent.mjs';
 
+import runnerModule from '../dist/agent/turn-runner.service.js';
+import eventsModule from '../dist/threads/thread-events.repository.js';
+const { TurnRunner } = runnerModule;
+const { THREAD_EVENTS, MemoryThreadEventsRepository } = eventsModule;
+
 const TOKEN = 'http-integration-test-only';
 const TIMEOUT = 10_000;
 
@@ -45,6 +50,7 @@ async function bounded(promise, signal = AbortSignal.timeout(4_000)) {
 async function server(t, agent, options = {}) {
   const store = options.store ?? new MemoryThreadRepository();
   for (const id of ['auth', 'validation', 'fresh', 'approval', 'empty', 'parallel', 'twice', 'duplicate', 'busy', 'independent', 'failure', 'disconnect', 'abandoned', 'routing']) await store.create(id);
+  const journal = new MemoryThreadEventsRepository(store);
   const previous = process.env.WINGMAN_API_TOKEN;
   process.env.WINGMAN_API_TOKEN = TOKEN;
   let app;
@@ -66,7 +72,7 @@ async function server(t, agent, options = {}) {
   class HttpTestModule {}
   Module({
     controllers: [ThreadsController],
-    providers: [AgentService, { provide: THREAD_REPOSITORY, useValue: store }, {
+    providers: [AgentService, TurnRunner, { provide: THREAD_EVENTS, useValue: journal }, { provide: THREAD_REPOSITORY, useValue: store }, {
       provide: AGENT_RUNTIME,
       useValue: { create: async () => agent, close: async () => { closed++; } },
     }],
@@ -101,12 +107,25 @@ async function server(t, agent, options = {}) {
   }
   async function stream(path, body) {
     const response = await request(path, { body });
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-type'), /^text\/event-stream/);
-    assert.equal(response.headers.get('cache-control'), 'no-cache');
-    return events(await response.text());
+    assert.equal(response.status, 202);
+    const { runId } = await response.json();
+    const threadId = path.split('/')[0];
+    const frames = [];
+    let cursor = '0';
+    while (true) {
+      const rows = await journal.listAfter(threadId, cursor, 100);
+      for (const row of rows) {
+        cursor = row.sequence;
+        if (row.runId !== runId) continue;
+        const { type, ...data } = row.payload;
+        frames.push({ type, data: ['done', 'approval', 'error'].includes(type) ? data : row.payload });
+        if (['done', 'approval', 'error'].includes(type)) return frames;
+      }
+      await bounded(new Promise(resolve => setTimeout(resolve, 10)));
+      t.signal.throwIfAborted();
+    }
   }
-  return { request, json, stream, store };
+  return { request, json, stream, store, journal };
 }
 
 function events(text) {
@@ -302,51 +321,35 @@ for (const afterHeaders of [false, true]) {
       }
       yield doneUpdate();
     }));
-    if (afterHeaders) {
-      const frames = await api.stream('failure/messages', { message: 'hello' });
-      assert.equal(frames[0].type, 'route');
-      assert.deepEqual(terminal(frames, 'error'), { message: 'deterministic turn failure' });
-    } else {
-      const body = await api.json('failure/messages', { body: { message: 'hello' } }, 500);
-      assert.equal(body.statusCode, 500);
-    }
+    const frames = await api.stream('failure/messages', { message: 'hello' });
+    if (afterHeaders) assert.equal(frames[0].type, 'route');
+    assert.deepEqual(terminal(frames, 'error'), { message: 'Turn failed; check server logs' });
     assert.deepEqual(terminal(await api.stream('failure/messages', { message: 'hello' }), 'done'), { text: 'hello' });
   });
 }
 
-test('disconnect aborts the turn signal and closes the running iterator', { timeout: TIMEOUT }, async (t) => {
-  const aborted = deferred();
-  const finished = deferred();
-  const disconnect = new AbortController();
+test('accepted turns finish after the requesting client disconnects', { timeout: TIMEOUT }, async (t) => {
+  const release = deferred();
+  t.after(() => release.resolve());
+  let turnSignal;
   const api = await server(t, fakeAgent(async function* (_input, { signal }) {
-    try {
-      yield progressUpdate();
-      if (!signal.aborted) {
-        await bounded(new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true })));
-      }
-      aborted.resolve(signal.aborted);
-      signal.throwIfAborted();
-    } finally {
-      finished.resolve();
-    }
+    turnSignal = signal;
+    yield progressUpdate();
+    await bounded(release.promise);
+    yield doneUpdate();
   }));
-  const response = await api.request('disconnect/messages', {
-    body: { message: 'hello' }, signal: disconnect.signal,
-  });
-  assert.equal(response.status, 200);
-  const reader = response.body.getReader();
-  try {
-    const chunk = await reader.read();
-    assert.equal(chunk.done, false);
-    assert.match(new TextDecoder().decode(chunk.value), /event: route/);
-    disconnect.abort();
-    assert.equal(await bounded(aborted.promise), true);
-    await bounded(finished.promise);
-  } finally {
-    disconnect.abort();
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
+  const disconnect = new AbortController();
+  const response = await api.request('disconnect/messages', { body: { message: 'hello' }, signal: disconnect.signal });
+  assert.equal(response.status, 202);
+  const { runId } = await response.json();
+  disconnect.abort();
+  release.resolve();
+  await bounded((async () => {
+    while (!(await api.journal.listAfter('disconnect', '0', 100)).some(row => row.runId === runId && row.payload.type === 'done')) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  })());
+  assert.equal(turnSignal.aborted, false);
 });
 
 test('a new message declines all abandoned approval stages before running', { timeout: TIMEOUT }, async (t) => {

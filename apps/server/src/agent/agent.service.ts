@@ -16,6 +16,7 @@ import {
   resumeTurn,
   startTurn,
   type TurnOptions,
+  type TurnResult,
 } from "@wingman/core/turns";
 import type { Agent } from "@wingman/core";
 import { AGENT_RUNTIME, type AgentRuntime } from "./agent.runtime";
@@ -25,34 +26,41 @@ import {
   type ThreadRecord,
 } from "../threads/thread.repository";
 import { decodeCursor, encodeCursor } from "../threads/cursors";
+import { TurnRunner } from "./turn-runner.service";
+import { THREAD_EVENTS, type ThreadEventsRepository } from "../threads/thread-events.repository";
 import { HistoryCursor, ListCursor } from "../threads/schemas";
 
 /** Owns the agent and serializes mutations of each API-managed thread. */
 @Injectable()
 export class AgentService implements OnModuleInit, OnApplicationShutdown {
   private agent!: Agent;
-  private readonly busy = new Set<string>();
+
 
   constructor(
     @Inject(AGENT_RUNTIME) private readonly runtime: AgentRuntime,
     @Inject(THREAD_REPOSITORY) private readonly threads: ThreadRepository,
+    @Inject(THREAD_EVENTS) readonly events: ThreadEventsRepository,
+    private readonly runner: TurnRunner,
   ) {}
 
   async onModuleInit() {
     try {
       await this.threads.init();
+      await this.events.init();
       this.agent = await this.runtime.create();
     } catch (error) {
+      await this.events.close();
       await this.threads.close();
       throw error;
     }
   }
 
   async onApplicationShutdown() {
+    await this.runner.close();
     try {
       await this.runtime.close();
     } finally {
-      await this.threads.close();
+      try { await this.events.close(); } finally { await this.threads.close(); }
     }
   }
 
@@ -101,37 +109,44 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     };
   }
 
-  send(threadId: string, message: string, options: TurnOptions) {
-    return this.exclusive(threadId, async () => {
+  async send(threadId: string, message: string) {
+    const accepted = await this.runner.accept(threadId, async () => {
       await this.requireThread(threadId);
       await this.threads.touch(threadId, message);
-      try {
+      return async (runId, signal) => { await this.execute(threadId, runId, signal, async options => {
         await declinePending(this.agent, threadId, options);
-        return await startTurn(this.agent, message, threadId, options);
-      } finally {
-        await this.threads.touch(threadId);
-      }
+        return startTurn(this.agent, message, threadId, options);
+      }); };
     });
+    return { runId: accepted.runId };
   }
 
-  resume(threadId: string, answers: Record<string, boolean>, options: TurnOptions) {
-    return this.exclusive(threadId, async () => {
+  async resume(threadId: string, answers: Record<string, boolean>) {
+    const accepted = await this.runner.accept(threadId, async () => {
       await this.requireThread(threadId);
       const pending = await getPendingApprovals(this.agent, threadId);
-      const ids = new Set(pending.map((p) => p.id));
+      const ids = new Set(pending.map(p => p.id));
       const given = Object.keys(answers);
-      if (ids.size === 0) {
-        throw new ConflictException("Nothing is waiting for approval");
-      }
-      if (given.length !== ids.size || !given.every((id) => ids.has(id))) {
+      if (!ids.size) throw new ConflictException("Nothing is waiting for approval");
+      if (given.length !== ids.size || !given.every(id => ids.has(id)))
         throw new BadRequestException("Answer every pending approval by id");
-      }
-      try {
-        return await resumeTurn(this.agent, answers, threadId, options);
-      } finally {
-        await this.threads.touch(threadId);
-      }
+      return async (runId, signal) => { await this.execute(threadId, runId, signal, options => resumeTurn(this.agent, answers, threadId, options)); };
     });
+    return { runId: accepted.runId };
+  }
+
+  private async execute(threadId: string, runId: string, signal: AbortSignal, run: (options: TurnOptions) => Promise<TurnResult>): Promise<TurnResult> {
+    try {
+      const result = await run({ signal, onEvent: async payload => { await this.events.append(threadId, runId, payload); } });
+      await this.threads.touch(threadId);
+      await this.events.append(threadId, runId, result.kind === "paused"
+        ? { type: "approval", approvals: result.interrupts.map(it => ({ id: it.id!, command: it.value!.command })) }
+        : { type: "done", text: result.text });
+      return result;
+    } catch (error) {
+      await this.events.append(threadId, runId, { type: "error", message: signal.aborted ? "Server stopped the turn" : "Turn failed; check server logs" });
+      throw error;
+    }
   }
 
   async pending(threadId: string) {
@@ -141,15 +156,16 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
 
   /** A deleting marker survives partial failure and lets DELETE safely retry. */
   delete(threadId: string) {
-    return this.exclusive(threadId, async () => {
+    return this.runner.exclusive(threadId, async () => {
       if (!await this.threads.get(threadId)) return;
       await this.threads.markDeleting(threadId);
       await deleteThreadState(this.agent, threadId);
+      await this.events.delete(threadId);
       await this.threads.delete(threadId);
     });
   }
 
-  private async requireThread(threadId: string): Promise<ThreadRecord> {
+  async requireThread(threadId: string): Promise<ThreadRecord> {
     const thread = await this.threads.get(threadId);
     if (!thread) {
       throw new NotFoundException("Thread not found; create it with POST /threads");
@@ -160,15 +176,4 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     return thread;
   }
 
-  private async exclusive<T>(threadId: string, run: () => Promise<T>): Promise<T> {
-    if (this.busy.has(threadId)) {
-      throw new ConflictException("A turn is already running on this thread");
-    }
-    this.busy.add(threadId);
-    try {
-      return await run();
-    } finally {
-      this.busy.delete(threadId);
-    }
-  }
 }

@@ -1,10 +1,7 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res,
+  Body, Controller, Delete, Get, HttpCode, Param, Post, Query,
 } from "@nestjs/common";
-import type { Response } from "express";
-import type { TurnOptions, TurnResult } from "@wingman/core";
 import { AgentService } from "../agent/agent.service";
-import { sseWriter } from "./sse";
 import {
   parse, ResumeBody, SendBody, ThreadId, ListQuery, HistoryQuery,
 } from "./schemas";
@@ -36,30 +33,19 @@ export class ThreadsController {
     await this.agent.delete(parse(ThreadId, threadId));
   }
 
-  /** Streams a turn: progress events, then `approval` or `done`. */
+  /** Accepts a turn; progress is delivered through the events endpoint. */
   @Post(":threadId/messages")
-  async send(
-    @Param("threadId") threadId: string,
-    @Body() body: unknown,
-    @Res() res: Response,
-  ) {
-    const id = parse(ThreadId, threadId);
+  @HttpCode(202)
+  send(@Param("threadId") threadId: string, @Body() body: unknown) {
     const { message } = parse(SendBody, body);
-    await this.stream(res, (options) => this.agent.send(id, message, options));
+    return this.agent.send(parse(ThreadId, threadId), message);
   }
 
-  /** Answers pending approvals and streams the rest of the turn. */
   @Post(":threadId/resume")
-  async resume(
-    @Param("threadId") threadId: string,
-    @Body() body: unknown,
-    @Res() res: Response,
-  ) {
-    const id = parse(ThreadId, threadId);
+  @HttpCode(202)
+  resume(@Param("threadId") threadId: string, @Body() body: unknown) {
     const { answers } = parse(ResumeBody, body);
-    await this.stream(res, (options) =>
-      this.agent.resume(id, answers, options),
-    );
+    return this.agent.resume(parse(ThreadId, threadId), answers);
   }
 
   /** What the thread is waiting on, so the UI can recover after a reload. */
@@ -68,44 +54,4 @@ export class ThreadsController {
     return this.agent.pending(parse(ThreadId, threadId));
   }
 
-  /**
-   * Runs a turn and streams it. Closing the connection aborts the turn; if it
-   * was paused, the next message declines the pending approval.
-   */
-  private async stream(
-    res: Response,
-    run: (options: TurnOptions) => Promise<TurnResult>,
-  ) {
-    const send = sseWriter(res);
-    const controller = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded) controller.abort();
-    });
-
-    let result: TurnResult;
-    try {
-      result = await run({
-        signal: controller.signal,
-        onEvent: async (event) => { send(event.type, event); },
-      });
-    } catch (err) {
-      if (!res.headersSent) throw err; // nothing streamed yet: normal HTTP error
-      if (!controller.signal.aborted)
-        send("error", { message: (err as Error).message });
-      res.end();
-      return;
-    }
-
-    if (result.kind === "paused") {
-      send("approval", {
-        approvals: result.interrupts.map((it) => ({
-          id: it.id!,
-          command: it.value!.command,
-        })),
-      });
-    } else {
-      send("done", { text: result.text });
-    }
-    res.end();
-  }
 }
