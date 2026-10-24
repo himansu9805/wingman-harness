@@ -26,7 +26,8 @@ class DemoModel extends BaseChatModel {
     const results = messages.slice(lastUser + 1).filter(ToolMessage.isInstance);
     const calls = !results.length && text.startsWith('run') ? [{ name: 'exec_bash_command', args: { command: 'uptime' }, id: `command-${lastUser}` }]
       : !results.length && text === 'recall memory' ? [{ name: 'recall_memory', args: { name: 'Demo workspace' }, id: `memory-${lastUser}` }] : [];
-    const message = new AIMessage({ content: calls.length ? '' : results.length ? results.map(result => result.text).join(', ') : text, tool_calls: calls });
+    if (text === 'run two' && !results.length) calls.push({ name: 'exec_bash_command', args: { command: 'pwd' }, id: `second-command-${lastUser}` });
+    const message = new AIMessage({ content: calls.length ? '' : results.length ? results.map(result => result.text).join(', ') : text, tool_calls: calls, usage_metadata: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } });
     return { generations: [{ text: message.text, message }] };
   }
 }

@@ -45,6 +45,16 @@ export function transcript(
       }
     }
   }
+  // Approval/resume metadata carries an explicit turn ID. Prefer that relationship
+  // over inferring the link from tool names or repeated response text.
+  const turnIds = new Map(entries.flatMap(([runId, events]) => {
+    const snapshot = events.findLast(event => event.type === 'run');
+    return snapshot?.type === 'run' ? [[runId, snapshot.metadata.turnId] as const] : [];
+  }));
+  for (const [runId, turnId] of turnIds) {
+    const known = [...turnIds].find(([id, related]) => related === turnId && assignment.has(id));
+    if (known) assignment.set(runId, assignment.get(known[0])!);
+  }
   for (let index = entries.length - 1; index >= 0; index--) {
     const [runId, run] = entries[index];
     if (assignment.has(runId)) continue;

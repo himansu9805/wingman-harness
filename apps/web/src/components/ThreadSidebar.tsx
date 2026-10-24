@@ -24,7 +24,7 @@ export function ThreadSidebar({ model, onDelete }: {
       footer={<VStack gap={2}>
       </VStack>}>
       <SideNavItem key='new-conversation' label='New conversation' icon={SquarePen} isDisabled={model.working} onClick={() => void model.create()} />
-      <SideNavItem key='new-conversation' label='Scheduled' icon={Clock} isDisabled={model.working} onClick={() => void model.create()} />
+      <SideNavItem key='scheduled' label='Scheduled' icon={Clock} isDisabled={model.working} onClick={() => void model.create()} />
       <SideNavSection title="Conversations" endContent={
         <IconButton
           label='Refresh'

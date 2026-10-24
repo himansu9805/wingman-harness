@@ -5,9 +5,15 @@ export interface Activity { phase: RunPhase; runId?: string; events: ThreadEvent
 export const emptyActivity: Activity = { phase: 'idle', events: [] };
 
 export function applyEvent(state: Activity, event: ThreadEvent): Activity {
-  const phase: RunPhase = event.type === 'approval' ? 'paused'
+  const phase: RunPhase = event.type === 'run'
+    ? ({ running: 'running', paused: 'paused', completed: 'done', failed: 'error', interrupted: 'error' } as const)[event.metadata.status]
+    : event.type === 'approval' ? 'paused'
     : event.type === 'done' ? 'done' : event.type === 'error' ? 'error' : 'running';
-  return { runId: event.runId, phase, events: [...state.events, event].slice(-200) };
+  // A snapshot replaces the previous version; usage values are already cumulative.
+  const previous = event.type === 'run'
+    ? state.events.filter(item => item.type !== 'run' || item.runId !== event.runId)
+    : state.events;
+  return { runId: event.runId, phase, events: [...previous, event].slice(-200) };
 }
 
 /** Tool IDs, rather than names or run IDs, connect results across approval resumes. */

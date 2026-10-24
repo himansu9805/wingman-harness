@@ -51,3 +51,20 @@ test('assistant markup aligns model, tools and reply inside one ghost bubble', (
   assert.ok(!html.includes('Memory: recall_memory'));
   assert.ok(!html.includes('astryx-chat-system-message'));
 });
+
+test('collapsed multi-tool groups summarize every call instead of the final command', async () => {
+  const { ToolCalls } = await import('../src/components/ToolCalls.tsx');
+  const calls = [
+    { id: 'one', name: 'exec_bash_command', args: { command: 'pwd' }, result: { output: '/demo', truncated: false } },
+    { id: 'two', name: 'exec_bash_command', args: { command: 'uptime' }, result: { output: 'up 1 hour', truncated: false } },
+  ];
+  const render = (items, running) => renderToStaticMarkup(createElement(ToolCalls, { calls: items, running }));
+  const completed = render(calls, false);
+  assert.match(completed, /2 tool calls completed/);
+  assert.match(completed, /aria-expanded="false"/);
+  assert.match(render([calls[0], { ...calls[1], result: undefined }], true), /1 of 2 tool calls completed/);
+  assert.match(render(calls.map(call => ({ ...call, result: undefined })), false), /2 tool calls pending/);
+  assert.match(render(calls.map(call => ({ ...call, result: undefined })), true), /2 tool calls running/);
+  assert.match(render([calls[0]], false), /pwd/);
+  assert.ok(!render([calls[0]], false).includes('2 tool calls'));
+});
