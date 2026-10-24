@@ -1,0 +1,155 @@
+name: Semgrep
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '30 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code:
+    name: Semgrep code scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep Community Edition
+        run: python -m pip install semgrep==1.182.0
+
+      # No Semgrep account or token is needed. Scan the whole checkout with
+      # curated CI and secret-detection rules; findings and scan errors fail.
+      - name: Scan code
+        id: scan
+        run: |
+          mkdir -p semgrep-report
+          semgrep scan --config p/ci --config p/secrets \
+            --error --strict --metrics=off --disable-version-check \
+            --exclude semgrep-report \
+            --json-output semgrep-report/results.json \
+            --sarif-output semgrep-report/results.sarif .
+
+      - name: Summarize scan
+        if: ${{ !cancelled() && steps.scan.outcome != 'skipped' }}
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          python <<'PY'
+          import collections
+          import html
+          import json
+          import os
+          from pathlib import Path
+
+          lines = [
+              '# Semgrep code report', '',
+              f"Commit: `{os.environ['GITHUB_SHA']}`",
+              f"Scan step: **{os.environ['SCAN_OUTCOME']}**", '',
+              'Semgrep Community Edition · rules: `p/ci` and `p/secrets`.',
+              'Full checkout scan using Semgrep and Git ignore defaults. All reported findings fail the scan; strict mode also fails on scanner diagnostics.', '',
+          ]
+          report = Path('semgrep-report/results.json')
+          if report.exists():
+              data = json.loads(report.read_text())
+              results = data.get('results', [])
+              counts = collections.Counter(result.get('extra', {}).get('severity', 'UNKNOWN') for result in results)
+              lines.extend([
+                  '| Severity | Findings |', '| --- | ---: |',
+                  *[f'| {severity} | {counts[severity]} |' for severity in ('ERROR', 'WARNING', 'INFO')], '',
+                  f"Files scanned: **{len(data.get('paths', {}).get('scanned', []))}** · Scanner diagnostics: **{len(data.get('errors', []))}**", '',
+              ])
+              if results:
+                  lines.extend(['### Findings (first 20)', '', '| File | Line | Rule |', '| --- | ---: | --- |'])
+                  def escape(value):
+                      return html.escape(str(value)).replace('|', '&#124;').replace('\n', ' ').replace('\r', ' ').replace('@', '&#64;')
+                  for result in results[:20]:
+                      lines.append(f"| {escape(result['path'])} | {result['start']['line']} | {escape(result['check_id'])} |")
+          else:
+              lines.append('No results file was produced. Review the logs; this is not a clean scan.')
+          lines.extend(['', 'Download **semgrep-report** for the complete JSON and SARIF results when generated.'])
+          summary = '\n'.join(lines) + '\n'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(summary)
+          Path(os.environ['RUNNER_TEMP'], 'semgrep-summary.md').write_text(summary)
+          Path('semgrep-report').mkdir(exist_ok=True)
+          Path('semgrep-report/summary.md').write_text(summary)
+          PY
+
+      - name: Publish report files
+        id: report
+        if: ${{ !cancelled() && hashFiles('semgrep-report/*') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: semgrep-report
+          path: semgrep-report/
+          retention-days: 30
+          if-no-files-found: error
+
+      # Fork and Dependabot PRs are scanned too, but their tokens cannot
+      # publish comments. Keep publishing restricted to trusted PRs/pushes.
+      - name: Publish findings to GitHub Security
+        if: >-
+          !cancelled() && hashFiles('semgrep-report/results.sarif') != '' &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.head.repo.full_name == github.repository &&
+            github.actor != 'dependabot[bot]'))
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          sarif_file: semgrep-report/results.sarif
+          category: semgrep-community
+
+      - name: Attach report to pull request
+        if: >-
+          !cancelled() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.actor != 'dependabot[bot]'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          REPORT_URL: ${{ steps.report.outputs.artifact-url }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const marker = '<!-- wingman-semgrep-report -->';
+            const repo = context.repo;
+            const issue_number = context.issue.number;
+            const { data: pull } = await github.rest.pulls.get({ ...repo, pull_number: issue_number });
+            if (pull.head.sha !== context.payload.pull_request.head.sha) {
+              core.info('A newer commit exists; leaving its report comment unchanged.');
+              return;
+            }
+            const path = `${process.env.RUNNER_TEMP}/semgrep-summary.md`;
+            const summary = fs.existsSync(path)
+              ? fs.readFileSync(path, 'utf8')
+              : '# Semgrep code report\n\nNo summary was produced. Review the workflow logs; this is not a clean scan.';
+            const runUrl = `${context.serverUrl}/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`;
+            const report = process.env.REPORT_URL
+              ? `[Download report bundle](${process.env.REPORT_URL}) — retained for 30 days; GitHub sign-in required.`
+              : 'No report artifact is available. Review the workflow logs.';
+            const body = [marker, summary.slice(0, 50000), report, '', `[View workflow run](${runUrl})`, `PR commit: \`${pull.head.sha}\``].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number, per_page: 100 });
+            const previous = comments.find(comment => comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ ...repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...repo, issue_number, body });
+            }

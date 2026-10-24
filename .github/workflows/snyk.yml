@@ -40,9 +40,9 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -113,7 +113,7 @@ jobs:
       - name: Publish report files
         id: report
         if: ${{ !cancelled() && hashFiles('snyk-report/*') != '' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: snyk-report
           path: snyk-report/
@@ -122,14 +122,14 @@ jobs:
 
       - name: Publish findings to GitHub Security
         if: ${{ !cancelled() && hashFiles('snyk-report/results.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: snyk-report/results.sarif
           category: snyk-open-source
 
       - name: Attach report to pull request
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           REPORT_URL: ${{ steps.report.outputs.artifact-url }}
           SCAN_OUTCOME: ${{ steps.scan.outcome }}

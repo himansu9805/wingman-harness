@@ -192,6 +192,9 @@ throughout pre-release development. A detailed `docs/` directory is planned for 
 
 ## Security
 
+To report a vulnerability, follow the [security policy](SECURITY.md). Keep
+vulnerability details out of public issues and pull requests.
+
 Wingman can run commands on the machine it's installed on. The server binds to
 `127.0.0.1` and requires a bearer token; don't expose it to a network without
 real authentication and TLS. Commands outside the allow list need your
