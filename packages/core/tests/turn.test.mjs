@@ -244,3 +244,11 @@ for (const [type, update] of asynchronousEventCases) {
     assert.equal(closed, true);
   });
 }
+
+test('server scheduling context reaches tools while CLI turns remain unbound', async () => {
+  const agent = streamed([reply('ok')], [reply('ok')]);
+  await startTurn(agent, 'schedule', 'server-thread', { ...options(), schedulerThreadId: 'server-thread' });
+  assert.equal(agent.inputs[0].config.configurable.scheduler_thread_id, 'server-thread');
+  await startTurn(agent, 'schedule', 'cli-thread', options());
+  assert.equal(agent.inputs[1].config.configurable.scheduler_thread_id, undefined);
+});

@@ -40,7 +40,9 @@ export async function startScheduler(dispatch: JobDispatcher): Promise<void> {
  */
 export async function closeScheduler(): Promise<void> {
   if (agenda) {
-    await agenda.stop();
+    // Let handlers finish recording results before disconnecting their backend.
+    if (started) await agenda.drain();
+    else await agenda.stop();
     agenda = null;
     started = false;
   }
@@ -75,10 +77,11 @@ export async function scheduleRecurring(
   // Not `every()`: it saves jobs as type "single", which upserts by name, so
   // every agent-task would overwrite the last. A normal job keyed on the
   // prompt lets several recurring tasks coexist.
+  const schedulingScope = data.threadId ? `thread:${data.threadId}` : "standalone";
   const job = getScheduler()
-    .create(AGENT_TASK_JOB, data)
+    .create(AGENT_TASK_JOB, { ...data, schedulingScope })
     .repeatEvery(interval)
-    .unique({ "data.prompt": data.prompt });
+    .unique({ "data.prompt": data.prompt, "data.schedulingScope": schedulingScope });
   await job.save();
   return String(job.attrs._id);
 }

@@ -18,7 +18,7 @@ import {
   type TurnOptions,
   type TurnResult,
 } from "@wingman/core/turns";
-import type { Agent } from "@wingman/core";
+import type { Agent, ScheduledEvent, TaskRun } from "@wingman/core";
 import { AGENT_RUNTIME, type AgentRuntime } from "./agent.runtime";
 import {
   THREAD_REPOSITORY,
@@ -48,6 +48,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       await this.threads.init();
       await this.events.init();
       this.agent = await this.runtime.create();
+      await this.runtime.startScheduler(event => this.dispatchScheduled(event));
     } catch (error) {
       try { await this.runtime.close(); } finally {
         try { await this.events.close(); } finally { await this.threads.close(); }
@@ -57,7 +58,9 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
   }
 
   async beforeApplicationShutdown() {
-    await this.runner.close();
+    const draining = this.runner.close();
+    await this.runtime.stopScheduler();
+    await draining;
   }
 
   async onApplicationShutdown() {
@@ -143,7 +146,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
 
   private async execute(threadId: string, runId: string, signal: AbortSignal, run: (options: TurnOptions) => Promise<TurnResult>): Promise<TurnResult> {
     try {
-      const result = await run({ signal, onEvent: async payload => { await this.events.append(threadId, runId, payload); } });
+      const result = await run({ signal, schedulerThreadId: threadId, onEvent: async payload => { await this.events.append(threadId, runId, payload); } });
       await this.threads.touch(threadId);
       await this.events.append(threadId, runId, result.kind === "paused"
         ? { type: "approval", approvals: result.interrupts.map(it => ({ id: it.id!, command: it.value!.command })) }
@@ -153,6 +156,37 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       await this.events.append(threadId, runId, { type: "error", message: signal.aborted ? "Server stopped the turn" : "Turn failed; check server logs" });
       throw error;
     }
+  }
+
+  /** Keep Agenda's lock until execution settles; never consume an existing approval. */
+  async dispatchScheduled(event: ScheduledEvent): Promise<void | { retryAt: Date }> {
+    const threadId = event.standalone ? randomUUID() : event.threadId;
+    const startedAt = new Date();
+    let result: TurnResult | undefined;
+    let acceptedRun = false;
+    try {
+      const accepted = await this.runner.accept(threadId, async () => {
+        if (event.standalone) await this.threads.create(threadId);
+        await this.requireThread(threadId);
+        if ((await getPendingApprovals(this.agent, threadId)).length) {
+          throw new ConflictException("Thread is waiting for approval");
+        }
+        await this.threads.touch(threadId, event.prompt);
+        return async (runId, signal) => {
+          await this.events.append(threadId, runId, { type: "scheduled", jobId: event.jobId, prompt: event.prompt });
+          result = await this.execute(threadId, runId, signal, options => startTurn(this.agent,
+            `This task was scheduled earlier and is due now: ${event.prompt}\nCarry it out now. Your reply is the result delivered to the user. Do not schedule it again. Commands requiring approval must wait for the user's decision.`, threadId, options));
+        };
+      });
+      acceptedRun = true;
+      await accepted.completion;
+    } catch (error) {
+      if (!acceptedRun && error instanceof ConflictException) return { retryAt: new Date(Date.now() + 30_000) };
+      await this.runtime.recordRun({ jobId: event.jobId, prompt: event.prompt, threadId, status: this.shutdownSignal.aborted ? "interrupted" : "failed", error: error instanceof Error ? error.message : String(error), startedAt, finishedAt: new Date() });
+      throw error;
+    }
+    const run: TaskRun = { jobId: event.jobId, prompt: event.prompt, threadId, status: result?.kind === "paused" ? "paused" : "success", ...(result?.kind === "done" ? { output: result.text } : {}), startedAt, finishedAt: new Date() };
+    await this.runtime.recordRun(run);
   }
 
   async pending(threadId: string) {

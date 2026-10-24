@@ -37,6 +37,8 @@ export interface TurnOptions {
   signal: AbortSignal;
   /** Awaited before processing the next event. */
   onEvent?: TurnEventHandler;
+  /** Bind server-created scheduled jobs to their catalogue thread. */
+  schedulerThreadId?: string;
 }
 
 /** A command waiting for the user's approval. */
@@ -116,10 +118,10 @@ export async function runTurn(
   agent: Agent,
   input: TurnInput,
   threadId: string,
-  { signal, onEvent = async () => {} }: TurnOptions,
+  { signal, onEvent = async () => {}, schedulerThreadId }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
-    configurable: { thread_id: threadId },
+    configurable: { thread_id: threadId, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
     streamMode: "updates",
     signal,
   });

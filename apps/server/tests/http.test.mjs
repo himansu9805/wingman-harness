@@ -74,7 +74,7 @@ async function server(t, agent, options = {}) {
     controllers: [ThreadsController],
     providers: [AgentService, TurnRunner, { provide: THREAD_EVENTS, useValue: journal }, { provide: THREAD_REPOSITORY, useValue: store }, {
       provide: AGENT_RUNTIME,
-      useValue: { create: async () => agent, close: async () => { closed++; } },
+      useValue: { create: async () => agent, close: async () => { closed++; }, startScheduler: async () => {}, stopScheduler: async () => {}, recordRun: async () => {}, ...options.runtime },
     }],
   })(HttpTestModule);
   app = await NestFactory.create(HttpTestModule, { logger: false });
@@ -136,7 +136,7 @@ async function server(t, agent, options = {}) {
       }
     } finally { subscription.abort(); await reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
-  return { request, json, stream, store, journal, close: async () => { const closing = app; app = null; await closing.close(); assert.equal(closed, 1); } };
+  return { request, json, stream, store, journal, service: app.get(AgentService), close: async () => { const closing = app; app = null; await closing.close(); assert.equal(closed, 1); } };
 }
 
 function events(text) {
@@ -689,4 +689,48 @@ test('shutdown aborts background work and closes idle event subscriptions', { ti
   assert.equal(signal.aborted, true);
   assert.deepEqual(terminal, { type: 'error', message: 'Server stopped the turn' });
   assert.equal((await reader.read()).done, true);
+});
+
+test('server scheduler delivers results and approvals on the originating thread', { timeout: TIMEOUT }, async t => {
+  const fixture = createApprovalAgent();
+  const runs = []; let dispatch; let stopped = false;
+  const api = await server(t, fixture.agent, { runtime: {
+    startScheduler: async callback => { dispatch = callback; },
+    stopScheduler: async () => { stopped = true; },
+    recordRun: async run => { runs.push(run); },
+  } });
+  await dispatch({ jobId: 'job', prompt: 'run test', threadId: 'fresh' });
+  const rows = await api.journal.listAfter('fresh', '0', 100);
+  assert.equal(rows[0].payload.type, 'scheduled');
+  assert.equal(rows.at(-1).payload.type, 'approval');
+  assert.equal(runs[0].status, 'paused');
+  assert.deepEqual(fixture.executions, []);
+  const pending = await api.json('fresh/pending');
+  const retry = await dispatch({ jobId: 'job2', prompt: 'hello', threadId: 'fresh' });
+  assert.ok(retry.retryAt > new Date());
+  assert.deepEqual(await api.json('fresh/pending'), pending);
+  terminal(await api.stream('fresh/resume', { answers: { [pending[0].id]: true } }), 'done');
+  assert.deepEqual(fixture.executions, ['test-1']);
+  await dispatch({ jobId: 'job3', prompt: 'hello', threadId: 'fresh' });
+  assert.equal(runs.at(-1).status, 'success');
+  assert.equal(runs.at(-1).threadId, 'fresh');
+  await api.close(); assert.equal(stopped, true);
+});
+
+test('scheduled turns defer while busy, never recreate deleted bound threads, and catalogue standalone results', { timeout: TIMEOUT }, async t => {
+  const release = deferred(); t.after(() => release.resolve());
+  const entered = deferred(); const runs = [];
+  const api = await server(t, fakeAgent(async function* () { entered.resolve(); await bounded(release.promise); yield doneUpdate(); }), { runtime: { recordRun: async run => runs.push(run) } });
+  await api.json('busy/messages', { body: { message: 'hello' } }, 202);
+  await bounded(entered.promise);
+  assert.ok((await api.service.dispatchScheduled({ jobId: 'busy-job', prompt: 'hello', threadId: 'busy' })).retryAt);
+  release.resolve();
+  await assert.rejects(api.service.dispatchScheduled({ jobId: 'missing-job', prompt: 'hello', threadId: 'deleted' }), e => e.status === 404);
+  assert.equal(await api.store.get('deleted'), null);
+  assert.equal(runs.at(-1).status, 'failed');
+  await api.service.dispatchScheduled({ jobId: 'legacy-job', prompt: 'hello', threadId: 'scheduled-legacy-job', standalone: true });
+  const standalone = runs.at(-1);
+  assert.equal(standalone.status, 'success');
+  assert.ok(await api.store.get(standalone.threadId));
+  assert.equal((await api.journal.listAfter(standalone.threadId, '0', 100))[0].payload.type, 'scheduled');
 });
