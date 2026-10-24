@@ -1,0 +1,25 @@
+info:
+  name: List threads
+  type: http
+  seq: 6
+
+http:
+  method: GET
+  url: "{{baseUrl}}/threads?limit=20"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", () => {
+          expect(res.status).to.equal(200);
+          expect(res.getBody().threads).to.be.an("array");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true

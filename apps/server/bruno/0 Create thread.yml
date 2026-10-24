@@ -1,0 +1,33 @@
+info:
+  name: Create thread
+  type: http
+
+http:
+  method: POST
+  url: "{{baseUrl}}/threads"
+  body:
+    type: json
+    data: "{}"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.status === 201) {
+          bru.setEnvVar("threadId", res.getBody().id);
+          bru.setVar("approvalId", "");
+        }
+    - type: tests
+      code: |-
+        test("201 with a new thread id", () => {
+          expect(res.status).to.equal(201);
+          expect(res.getBody().id).to.be.a("string").and.not.empty;
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true

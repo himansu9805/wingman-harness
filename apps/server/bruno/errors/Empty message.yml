@@ -1,0 +1,30 @@
+info:
+  name: Empty message
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/threads/{{threadId}}/messages"
+  body:
+    type: json
+    data: |-
+      {
+        "message": ""
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("400", () => {
+          expect(res.status).to.equal(400);
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
