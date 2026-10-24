@@ -17,23 +17,12 @@ body:json {
 }
 
 script:post-response {
-  // The body is an SSE stream: "event: <name>\ndata: <json>\n\n" blocks.
-  const body = res.getBody();
-  const text = typeof body === "string" ? body : JSON.stringify(body);
-  const match = text.match(/event: approval\ndata: (.*)/);
-  if (match) {
-    const { approvals } = JSON.parse(match[1]);
-    bru.setVar("approvalId", approvals[0].id);
-    console.log(`waiting for approval: ${approvals[0].command} (${approvals[0].id})`);
-  } else {
-    bru.setVar("approvalId", "");
-  }
+  if (res.status === 202) bru.setVar("runId", res.getBody().runId);
 }
 
 tests {
-  test("streams a turn that ends in done or approval", () => {
-    expect(res.status).to.equal(200);
-    const text = String(res.getBody());
-    expect(/event: (done|approval)/.test(text)).to.equal(true);
+  test("accepts a background turn", () => {
+    expect(res.status).to.equal(202);
+    expect(res.getBody().runId).to.be.a("string");
   });
 }

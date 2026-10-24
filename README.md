@@ -44,8 +44,8 @@
   graph database and shared across conversations.
 - **Scheduled tasks.** Reminders and recurring jobs, backed by Postgres.
 - **Durable conversations.** Threads and pending approvals survive restarts.
-- **Two ways in.** An interactive CLI, and a NestJS API that streams each turn
-  as Server-Sent Events.
+- **Two ways in.** An interactive CLI, and a NestJS API with replayable
+  thread events delivered as Server-Sent Events.
 
 ## How it works
 
@@ -141,37 +141,53 @@ The response is `201 {"id":"..."}`. Copy the returned ID into this variable:
 export THREAD_ID='<thread-id>'
 ```
 
-Ask that thread to run a command. It needs approval, so the stream ends by asking
-for it:
+Open a persistent event subscription in one terminal:
 
 ```bash
-curl -N "http://127.0.0.1:3000/threads/$THREAD_ID/messages" \
-  -H "Authorization: Bearer $WINGMAN_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "run uptime"}'
+curl -N "http://127.0.0.1:3000/threads/$THREAD_ID/events" \
+  -H "Authorization: Bearer $WINGMAN_API_TOKEN"
 ```
 
-```text
-event: tool_call
-data: {"type":"tool_call","name":"exec_bash_command","args":{"command":"uptime"}}
+Send a message from another terminal. The request returns `202 {"runId":"..."}`;
+execution continues if either client disconnects.
 
+```bash
+curl "http://127.0.0.1:3000/threads/$THREAD_ID/messages" \
+  -H "Authorization: Bearer $WINGMAN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"run uptime"}'
+```
+
+The subscription receives progress and, when approval is required, an event like:
+
+```text
+id: <thread-id>:3
 event: approval
-data: {"approvals":[{"id":"3f332c5b18d1cacb8391e4722dd64e54","command":"uptime"}]}
+data: {"type":"approval","approvals":[{"id":"<approval-id>","command":"uptime"}],"runId":"<run-id>"}
 ```
 
-Use the approval ID returned by your stream to approve it, and the turn finishes:
+Approve using that ID. Resume also returns `202` with a new run ID; tool results
+and the final `done` event arrive on the same subscription.
 
 ```bash
-curl -N "http://127.0.0.1:3000/threads/$THREAD_ID/resume" \
+curl "http://127.0.0.1:3000/threads/$THREAD_ID/resume" \
   -H "Authorization: Bearer $WINGMAN_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"answers": {"3f332c5b18d1cacb8391e4722dd64e54": true}}'
+  -d '{"answers":{"<approval-id>":true}}'
 ```
 
-```text
-event: done
-data: {"text":"System uptime: 6 hours 38 minutes. Load averages: 1.80, 11.13, 17.32."}
-```
+Reconnect using `Last-Event-ID: <thread-id>:<last-received-sequence>` to replay
+missed events. Without a cursor, the stream replays the thread's full event log.
+The subscription stays open across `approval`, `done` and `error` events.
+
+With `SCHEDULER_ENABLED=true`, the server also runs scheduled jobs and publishes
+their results through these events. API-created jobs use their originating thread;
+standalone jobs appear as new conversations. Run one server and one scheduler owner
+per database. Disable scheduling in a CLI running alongside that server.
+
+Event logs survive restarts; active execution does not automatically restart.
+Check history and pending approvals before retrying an interrupted action. Events
+are retained until thread deletion; there is no automatic retention policy yet.
 
 See [HTTP API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) for
 streaming events, approvals, thread listing, history and deletion. A

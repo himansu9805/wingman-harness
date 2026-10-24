@@ -11,17 +11,19 @@ export interface ScheduledEvent {
   jobId: string;
   prompt: string;
   threadId: string;
+  /** No catalogue thread was bound by the creator (CLI or legacy job). */
+  standalone?: boolean;
 }
 
 export interface TaskRun {
   jobId: string;
   prompt: string;
   threadId: string;
-  status: "success" | "failed" | "interrupted";
+  status: "success" | "failed" | "interrupted" | "paused";
   output?: string;
   error?: string;
   startedAt: Date;
   finishedAt: Date;
 }
 
-export type JobDispatcher = (event: ScheduledEvent) => Promise<void>;
+export type JobDispatcher = (event: ScheduledEvent) => Promise<void | { retryAt: Date }>;

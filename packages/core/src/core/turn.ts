@@ -26,14 +26,19 @@ export type TurnEvent =
       truncated: boolean;
     };
 
+/** Resolves when the consumer has finished handling the event. */
+export type TurnEventHandler = (event: TurnEvent) => Promise<void>;
+
 /** Answers one approval request. */
 export type Decide = (request: CommandApproval) => Promise<boolean>;
 
 export interface TurnOptions {
   /** Aborts the turn when triggered. */
   signal: AbortSignal;
-  /** Called for each route choice and tool call, as they happen. */
-  onEvent?: (event: TurnEvent) => void;
+  /** Awaited before processing the next event. */
+  onEvent?: TurnEventHandler;
+  /** Bind server-created scheduled jobs to their catalogue thread. */
+  schedulerThreadId?: string;
 }
 
 /** A command waiting for the user's approval. */
@@ -54,25 +59,25 @@ export type TurnResult =
  * @param message The AI message containing tool calls.
  * @param onEvent Receives one event per tool call.
  */
-function emitToolCalls(
+async function emitToolCalls(
   message: AIMessage,
-  onEvent: (event: TurnEvent) => void,
-) {
+  onEvent: TurnEventHandler,
+): Promise<void> {
   for (const call of message.tool_calls ?? []) {
     const identity = call.id ? { toolCallId: call.id } : {};
 
     if (call.name === "load_skill") {
       const name = (call.args as { name?: string }).name ?? "?";
-      onEvent({ type: "skill", name, ...identity });
+      await onEvent({ type: "skill", name, ...identity });
     } else if (MEMORY_TOOL_NAMES.has(call.name)) {
-      onEvent({
+      await onEvent({
         type: "memory",
         name: call.name,
         args: call.args,
         ...identity,
       });
     } else {
-      onEvent({
+      await onEvent({
         type: "tool_call",
         name: call.name,
         args: call.args,
@@ -83,14 +88,14 @@ function emitToolCalls(
 }
 
 /** Reports a bounded preview without changing the model's tool result. */
-function emitToolResults(
+async function emitToolResults(
   messages: unknown[],
-  onEvent: (event: TurnEvent) => void,
-) {
+  onEvent: TurnEventHandler,
+): Promise<void> {
   for (const message of messages) {
     if (!ToolMessage.isInstance(message)) continue;
 
-    onEvent({
+    await onEvent({
       type: "tool_result",
       name: message.name ?? "unknown",
       toolCallId: message.tool_call_id,
@@ -113,10 +118,10 @@ export async function runTurn(
   agent: Agent,
   input: TurnInput,
   threadId: string,
-  { signal, onEvent = () => {} }: TurnOptions,
+  { signal, onEvent = async () => {}, schedulerThreadId }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
-    configurable: { thread_id: threadId },
+    configurable: { thread_id: threadId, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
     streamMode: "updates",
     signal,
   });
@@ -136,7 +141,7 @@ export async function runTurn(
     const route =
       update["TypeSafeModelRouterMiddleware.before_agent"]?.modelRoute;
     if (route) {
-      onEvent({
+      await onEvent({
         type: "route",
         choice: route.choice,
         confidence: route.confidence,
@@ -147,7 +152,7 @@ export async function runTurn(
     const toolMessages = update.tools?.messages;
 
     if (Array.isArray(toolMessages)) {
-      emitToolResults(toolMessages, onEvent);
+      await emitToolResults(toolMessages, onEvent);
     }
 
     const modelUpdate = update.model_request;
@@ -159,7 +164,7 @@ export async function runTurn(
       continue;
     }
     if (message.tool_calls && message.tool_calls.length > 0) {
-      emitToolCalls(message, onEvent);
+      await emitToolCalls(message, onEvent);
     } else {
       finalMessage = message;
     }

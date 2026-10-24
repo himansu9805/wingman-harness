@@ -10,6 +10,11 @@ get {
   auth: inherit
 }
 
+script:post-response {
+  const approvals = res.getBody();
+  if (res.status === 200) bru.setVar("approvalId", approvals[0]?.id ?? "");
+}
+
 tests {
   test("200 with a list", () => {
     expect(res.status).to.equal(200);

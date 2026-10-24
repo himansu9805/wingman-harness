@@ -1,10 +1,11 @@
-import {
-  Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res,
-} from "@nestjs/common";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Response } from "express";
-import type { TurnOptions, TurnResult } from "@wingman/core";
+import { eventFrame, writeSse } from "./sse";
+import { validateSequence } from "./thread-events.repository";
+import {
+  BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, Param, Post, Query, Res,
+} from "@nestjs/common";
 import { AgentService } from "../agent/agent.service";
-import { sseWriter } from "./sse";
 import {
   parse, ResumeBody, SendBody, ThreadId, ListQuery, HistoryQuery,
 } from "./schemas";
@@ -36,30 +37,65 @@ export class ThreadsController {
     await this.agent.delete(parse(ThreadId, threadId));
   }
 
-  /** Streams a turn: progress events, then `approval` or `done`. */
-  @Post(":threadId/messages")
-  async send(
-    @Param("threadId") threadId: string,
-    @Body() body: unknown,
-    @Res() res: Response,
-  ) {
-    const id = parse(ThreadId, threadId);
-    const { message } = parse(SendBody, body);
-    await this.stream(res, (options) => this.agent.send(id, message, options));
+  /** Replays the journal and polls for new rows without a replay/live handoff gap. */
+  @Get(":threadId/events")
+  async events(@Param("threadId") rawId: string, @Headers("last-event-id") lastId: string | undefined, @Res() res: Response) {
+    const threadId = parse(ThreadId, rawId);
+    await this.agent.requireThread(threadId);
+    let cursor = "0";
+    if (lastId !== undefined) {
+      const prefix = `${threadId}:`;
+      if (!lastId.startsWith(prefix)) throw new BadRequestException("Event cursor belongs to another thread");
+      cursor = lastId.slice(prefix.length);
+      try { validateSequence(cursor); } catch { throw new BadRequestException("Invalid event cursor"); }
+      if (BigInt(cursor) > BigInt(await this.agent.events.latest(threadId))) throw new BadRequestException("Event cursor is ahead of this thread");
+    }
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, this.agent.shutdownSignal]);
+    const disconnect = () => controller.abort();
+    res.once("close", disconnect);
+    res.once("error", disconnect);
+    res.status(200).set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.flushHeaders();
+    let heartbeatAt = Date.now();
+    try {
+      while (!signal.aborted) {
+        try { await this.agent.requireThread(threadId); } catch { break; }
+        const rows = await this.agent.events.listAfter(threadId, cursor, 100);
+        for (const row of rows) {
+          await writeSse(res, eventFrame(row), signal);
+          cursor = row.sequence;
+        }
+        if (rows.length === 100) continue;
+        if (Date.now() - heartbeatAt >= 15_000) {
+          await writeSse(res, ": heartbeat\n\n", signal);
+          heartbeatAt = Date.now();
+        }
+        await delay(100, undefined, { signal });
+      }
+    } catch {
+      // The journal remains replayable after a disconnect or transport failure.
+      // End the connection so the client reconnects from its last received ID.
+    } finally {
+      controller.abort();
+      res.off("close", disconnect); res.off("error", disconnect);
+      res.end();
+    }
   }
 
-  /** Answers pending approvals and streams the rest of the turn. */
+  /** Accepts a turn; progress is delivered through the events endpoint. */
+  @Post(":threadId/messages")
+  @HttpCode(202)
+  send(@Param("threadId") threadId: string, @Body() body: unknown) {
+    const { message } = parse(SendBody, body);
+    return this.agent.send(parse(ThreadId, threadId), message);
+  }
+
   @Post(":threadId/resume")
-  async resume(
-    @Param("threadId") threadId: string,
-    @Body() body: unknown,
-    @Res() res: Response,
-  ) {
-    const id = parse(ThreadId, threadId);
+  @HttpCode(202)
+  resume(@Param("threadId") threadId: string, @Body() body: unknown) {
     const { answers } = parse(ResumeBody, body);
-    await this.stream(res, (options) =>
-      this.agent.resume(id, answers, options),
-    );
+    return this.agent.resume(parse(ThreadId, threadId), answers);
   }
 
   /** What the thread is waiting on, so the UI can recover after a reload. */
@@ -68,44 +104,4 @@ export class ThreadsController {
     return this.agent.pending(parse(ThreadId, threadId));
   }
 
-  /**
-   * Runs a turn and streams it. Closing the connection aborts the turn; if it
-   * was paused, the next message declines the pending approval.
-   */
-  private async stream(
-    res: Response,
-    run: (options: TurnOptions) => Promise<TurnResult>,
-  ) {
-    const send = sseWriter(res);
-    const controller = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded) controller.abort();
-    });
-
-    let result: TurnResult;
-    try {
-      result = await run({
-        signal: controller.signal,
-        onEvent: (event) => send(event.type, event),
-      });
-    } catch (err) {
-      if (!res.headersSent) throw err; // nothing streamed yet: normal HTTP error
-      if (!controller.signal.aborted)
-        send("error", { message: (err as Error).message });
-      res.end();
-      return;
-    }
-
-    if (result.kind === "paused") {
-      send("approval", {
-        approvals: result.interrupts.map((it) => ({
-          id: it.id!,
-          command: it.value!.command,
-        })),
-      });
-    } else {
-      send("done", { text: result.text });
-    }
-    res.end();
-  }
 }

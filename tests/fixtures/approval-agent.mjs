@@ -11,7 +11,9 @@ class ApprovalModel extends BaseChatModel {
   bindTools() { return this; }
   async _generate(messages) {
     const humanIndex = messages.findLastIndex(HumanMessage.isInstance);
-    const request = messages[humanIndex].text;
+    const text = messages[humanIndex].text;
+    // Understand the server framing while retaining deterministic tool decisions.
+    const request = text.match(/^This task was scheduled earlier and is due now: ([^\n]+)/)?.[1] ?? text;
     const results = messages.slice(humanIndex + 1).filter(ToolMessage.isInstance);
     let calls = [];
     if (request.startsWith('run') && results.length === 0) {

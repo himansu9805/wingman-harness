@@ -32,7 +32,7 @@ function enqueueTurn<T>(fn: () => Promise<T>): Promise<T> {
  *
  * @param event The turn event to display.
  */
-function printEvent(event: TurnEvent) {
+async function printEvent(event: TurnEvent): Promise<void> {
   switch (event.type) {
     case "route":
       console.log(`  🧭 ${formatRoute(event)}`);

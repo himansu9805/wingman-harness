@@ -1,3 +1,5 @@
+import { TurnRunner } from "./agent/turn-runner.service";
+import { THREAD_EVENTS, PostgresThreadEventsRepository } from "./threads/thread-events.repository";
 import { Module } from "@nestjs/common";
 import { AgentService } from "./agent/agent.service";
 import { ThreadsController } from "./threads/threads.controller";
@@ -9,6 +11,8 @@ import { THREAD_REPOSITORY, PostgresThreadRepository } from "./threads/thread.re
   controllers: [ThreadsController],
   providers: [
     AgentService,
+    TurnRunner,
+    { provide: THREAD_EVENTS, useFactory: () => new PostgresThreadEventsRepository(process.env.POSTGRES_CONNECTION_STRING ?? "") },
     { provide: AGENT_RUNTIME, useValue: agentRuntime },
     {
       provide: THREAD_REPOSITORY,

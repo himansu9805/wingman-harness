@@ -1,5 +1,5 @@
 import type { Agenda, Job } from "agenda";
-import type { AgentTaskData, JobDispatcher, ScheduledEvent } from "./interfaces";
+import type { AgentTaskData, JobDispatcher } from "./interfaces";
 
 export const AGENT_TASK_JOB = "agent-task";
 
@@ -20,11 +20,16 @@ export function defineJobs(agenda: Agenda, dispatch: JobDispatcher) {
 
       // Awaiting the turn keeps the job locked until the agent finishes, so a
       // slow turn isn't picked up by another poll.
-      await dispatch({
+      const result = await dispatch({
         jobId,
         prompt,
         threadId: threadId ?? `scheduled-${jobId}`,
+        ...(!threadId ? { standalone: true } : {}),
       });
+      if (result) {
+        job.schedule(result.retryAt);
+        await job.save();
+      }
     },
     {
       // Turns share one agent; run them one at a time.

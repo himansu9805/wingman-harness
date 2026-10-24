@@ -18,6 +18,11 @@ import repositoryModule from '../dist/threads/thread.repository.js';
 const { THREAD_REPOSITORY, MemoryThreadRepository } = repositoryModule;
 import { createApprovalAgent } from '../../../tests/fixtures/approval-agent.mjs';
 
+import runnerModule from '../dist/agent/turn-runner.service.js';
+import eventsModule from '../dist/threads/thread-events.repository.js';
+const { TurnRunner } = runnerModule;
+const { THREAD_EVENTS, MemoryThreadEventsRepository } = eventsModule;
+
 const TOKEN = 'http-integration-test-only';
 const TIMEOUT = 10_000;
 
@@ -45,6 +50,7 @@ async function bounded(promise, signal = AbortSignal.timeout(4_000)) {
 async function server(t, agent, options = {}) {
   const store = options.store ?? new MemoryThreadRepository();
   for (const id of ['auth', 'validation', 'fresh', 'approval', 'empty', 'parallel', 'twice', 'duplicate', 'busy', 'independent', 'failure', 'disconnect', 'abandoned', 'routing']) await store.create(id);
+  const journal = new MemoryThreadEventsRepository(store);
   const previous = process.env.WINGMAN_API_TOKEN;
   process.env.WINGMAN_API_TOKEN = TOKEN;
   let app;
@@ -66,9 +72,9 @@ async function server(t, agent, options = {}) {
   class HttpTestModule {}
   Module({
     controllers: [ThreadsController],
-    providers: [AgentService, { provide: THREAD_REPOSITORY, useValue: store }, {
+    providers: [AgentService, TurnRunner, { provide: THREAD_EVENTS, useValue: journal }, { provide: THREAD_REPOSITORY, useValue: store }, {
       provide: AGENT_RUNTIME,
-      useValue: { create: async () => agent, close: async () => { closed++; } },
+      useValue: { create: async () => agent, close: async () => { closed++; }, startScheduler: async () => {}, stopScheduler: async () => {}, recordRun: async () => {}, ...options.runtime },
     }],
   })(HttpTestModule);
   app = await NestFactory.create(HttpTestModule, { logger: false });
@@ -76,14 +82,14 @@ async function server(t, agent, options = {}) {
   await app.listen(0, '127.0.0.1');
   const base = await app.getUrl();
 
-  function request(path, { body, method, authorization = `Bearer ${TOKEN}`, signal } = {}) {
+  function request(path, { body, method, authorization = `Bearer ${TOKEN}`, signal, headers = {} } = {}) {
     const controller = new AbortController();
     requests.add(controller);
     // Keep the deadline active through response body consumption, including SSE.
     return fetch(`${base}/threads/${path}`, {
       method: method ?? (body === undefined ? 'GET' : 'POST'),
       headers: {
-        'content-type': 'application/json',
+        'content-type': 'application/json', connection: 'close', ...headers,
         ...(authorization === null ? {} : { authorization }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -101,12 +107,36 @@ async function server(t, agent, options = {}) {
   }
   async function stream(path, body) {
     const response = await request(path, { body });
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-type'), /^text\/event-stream/);
-    assert.equal(response.headers.get('cache-control'), 'no-cache');
-    return events(await response.text());
+    assert.equal(response.status, 202);
+    const { runId } = await response.json();
+    const threadId = path.split('/')[0];
+    const subscription = new AbortController();
+    const listener = await request(`${threadId}/events`, { signal: subscription.signal });
+    assert.equal(listener.status, 200);
+    assert.match(listener.headers.get('content-type'), /^text\/event-stream/);
+    const reader = listener.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const frames = [];
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false, 'stream remains open across turns');
+        buffer += decoder.decode(chunk.value, { stream: true });
+        let end;
+        while ((end = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+          if (frame.startsWith(':')) continue;
+          const parsed = events(frame)[0];
+          if (parsed.data.runId !== runId) continue;
+          const { runId: ignored, type: payloadType, ...data } = parsed.data;
+          frames.push({ type: parsed.type, data: ['done', 'approval', 'error'].includes(parsed.type) ? data : { type: payloadType, ...data } });
+          if (['done', 'approval', 'error'].includes(parsed.type)) return frames;
+        }
+      }
+    } finally { subscription.abort(); await reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
-  return { request, json, stream, store };
+  return { request, json, stream, store, journal, service: app.get(AgentService), close: async () => { const closing = app; app = null; await closing.close(); assert.equal(closed, 1); } };
 }
 
 function events(text) {
@@ -293,7 +323,7 @@ test('same-thread concurrent turns and resumes conflict while another thread can
 });
 
 for (const afterHeaders of [false, true]) {
-  test(`errors ${afterHeaders ? 'after headers become SSE errors' : 'before headers become HTTP 500'} and release the lock`, { timeout: TIMEOUT }, async (t) => {
+  test(`background errors ${afterHeaders ? 'after progress' : 'before progress'} are persisted and release the lock`, { timeout: TIMEOUT }, async (t) => {
     let attempts = 0;
     const api = await server(t, fakeAgent(async function* () {
       if (attempts++ === 0) {
@@ -302,51 +332,35 @@ for (const afterHeaders of [false, true]) {
       }
       yield doneUpdate();
     }));
-    if (afterHeaders) {
-      const frames = await api.stream('failure/messages', { message: 'hello' });
-      assert.equal(frames[0].type, 'route');
-      assert.deepEqual(terminal(frames, 'error'), { message: 'deterministic turn failure' });
-    } else {
-      const body = await api.json('failure/messages', { body: { message: 'hello' } }, 500);
-      assert.equal(body.statusCode, 500);
-    }
+    const frames = await api.stream('failure/messages', { message: 'hello' });
+    if (afterHeaders) assert.equal(frames[0].type, 'route');
+    assert.deepEqual(terminal(frames, 'error'), { message: 'Turn failed; check server logs' });
     assert.deepEqual(terminal(await api.stream('failure/messages', { message: 'hello' }), 'done'), { text: 'hello' });
   });
 }
 
-test('disconnect aborts the turn signal and closes the running iterator', { timeout: TIMEOUT }, async (t) => {
-  const aborted = deferred();
-  const finished = deferred();
-  const disconnect = new AbortController();
+test('accepted turns finish after the requesting client disconnects', { timeout: TIMEOUT }, async (t) => {
+  const release = deferred();
+  t.after(() => release.resolve());
+  let turnSignal;
   const api = await server(t, fakeAgent(async function* (_input, { signal }) {
-    try {
-      yield progressUpdate();
-      if (!signal.aborted) {
-        await bounded(new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true })));
-      }
-      aborted.resolve(signal.aborted);
-      signal.throwIfAborted();
-    } finally {
-      finished.resolve();
-    }
+    turnSignal = signal;
+    yield progressUpdate();
+    await bounded(release.promise);
+    yield doneUpdate();
   }));
-  const response = await api.request('disconnect/messages', {
-    body: { message: 'hello' }, signal: disconnect.signal,
-  });
-  assert.equal(response.status, 200);
-  const reader = response.body.getReader();
-  try {
-    const chunk = await reader.read();
-    assert.equal(chunk.done, false);
-    assert.match(new TextDecoder().decode(chunk.value), /event: route/);
-    disconnect.abort();
-    assert.equal(await bounded(aborted.promise), true);
-    await bounded(finished.promise);
-  } finally {
-    disconnect.abort();
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
+  const disconnect = new AbortController();
+  const response = await api.request('disconnect/messages', { body: { message: 'hello' }, signal: disconnect.signal });
+  assert.equal(response.status, 202);
+  const { runId } = await response.json();
+  disconnect.abort();
+  release.resolve();
+  await bounded((async () => {
+    while (!(await api.journal.listAfter('disconnect', '0', 100)).some(row => row.runId === runId && row.payload.type === 'done')) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  })());
+  assert.equal(turnSignal.aborted, false);
 });
 
 test('a new message declines all abandoned approval stages before running', { timeout: TIMEOUT }, async (t) => {
@@ -589,4 +603,134 @@ test('resuming a paused turn updates catalogue activity without replacing its ti
   assert.equal(resumed.createdAt, created.createdAt);
   assert.ok(paused.updatedAt > created.updatedAt);
   assert.ok(resumed.updatedAt > paused.updatedAt);
+});
+
+test('SSE replays bounded pages, isolates thread cursors, and supports independent reconnects', { timeout: TIMEOUT }, async t => {
+  const api = await server(t, fakeAgent(async function* () { yield doneUpdate(); }));
+  const runId = '00000000-0000-4000-8000-000000000001';
+  for (let i = 0; i < 205; i++) await api.journal.append('fresh', runId, { type: 'done', text: String(i) });
+  for (const cursor of ['fresh:206', 'fresh:01', 'fresh:-1', 'fresh:9223372036854775808', 'approval:1', 'garbage']) {
+    await api.json('fresh/events', { headers: { 'last-event-id': cursor } }, 400);
+  }
+  await api.json('missing/events', undefined, 404);
+  await api.json('fresh/events', { authorization: null }, 401);
+  async function readCount(cursor, count) {
+    const response = await api.request('fresh/events', { headers: { 'last-event-id': `fresh:${cursor}` } });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    let text = '';
+    try {
+      while ((text.match(/event: done/g) ?? []).length < count) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false);
+        text += new TextDecoder().decode(chunk.value);
+      }
+      return [...text.matchAll(/^id: fresh:(\d+)$/gm)].map(m => Number(m[1]));
+    } finally { await reader.cancel(); }
+  }
+  const [all, reconnect] = await Promise.all([readCount(0, 205), readCount(200, 5)]);
+  assert.deepEqual(all, Array.from({ length: 205 }, (_, i) => i + 1));
+  assert.deepEqual(reconnect, [201, 202, 203, 204, 205]);
+});
+
+test('disconnecting an event subscriber preserves execution and replay finds the result', { timeout: TIMEOUT }, async t => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  let signal;
+  const api = await server(t, fakeAgent(async function* (_input, options) {
+    signal = options.signal;
+    yield progressUpdate();
+    await bounded(gate.promise);
+    yield doneUpdate();
+  }));
+  const { runId } = await api.json('disconnect/messages', { body: { message: 'hello' } }, 202);
+  const response = await api.request('disconnect/events');
+  const reader = response.body.getReader();
+  const chunk = await reader.read();
+  assert.match(new TextDecoder().decode(chunk.value), /event: route/);
+  await reader.cancel();
+  assert.equal(signal.aborted, false);
+  gate.resolve();
+  await bounded((async () => {
+    while (!(await api.journal.listAfter('disconnect', '0', 100)).some(row => row.runId === runId && row.payload.type === 'done')) await new Promise(resolve => setTimeout(resolve, 10));
+  })());
+  const replay = await api.request('disconnect/events', { headers: { 'last-event-id': 'disconnect:1' } });
+  const replayReader = replay.body.getReader();
+  try { assert.match(new TextDecoder().decode((await replayReader.read()).value), /event: done/); }
+  finally { await replayReader.cancel(); }
+});
+
+test('deleting a thread ends subscribers and removes its journal', { timeout: TIMEOUT }, async t => {
+  const api = await server(t, createApprovalAgent().agent);
+  await api.stream('fresh/messages', { message: 'hello' });
+  const response = await api.request('fresh/events', { headers: { 'last-event-id': 'fresh:1' } });
+  const reader = response.body.getReader();
+  assert.equal((await api.request('fresh', { method: 'DELETE' })).status, 204);
+  assert.equal((await reader.read()).done, true);
+  assert.deepEqual(await api.journal.listAfter('fresh', '0', 100), []);
+});
+
+test('shutdown aborts background work and closes idle event subscriptions', { timeout: TIMEOUT }, async t => {
+  const entered = deferred();
+  let signal;
+  let terminal;
+  const api = await server(t, fakeAgent(async function* (_input, options) {
+    signal = options.signal; entered.resolve();
+    await bounded(new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })));
+    signal.throwIfAborted();
+  }));
+  const append = api.journal.append.bind(api.journal);
+  api.journal.append = async (...args) => { if (args[2].type === 'error') terminal = args[2]; return append(...args); };
+  await api.json('fresh/messages', { body: { message: 'hello' } }, 202);
+  await bounded(entered.promise);
+  const subscription = await api.request('independent/events');
+  const reader = subscription.body.getReader();
+  await api.close();
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(terminal, { type: 'error', message: 'Server stopped the turn' });
+  assert.equal((await reader.read()).done, true);
+});
+
+test('server scheduler delivers results and approvals on the originating thread', { timeout: TIMEOUT }, async t => {
+  const fixture = createApprovalAgent();
+  const runs = []; let dispatch; let stopped = false;
+  const api = await server(t, fixture.agent, { runtime: {
+    startScheduler: async callback => { dispatch = callback; },
+    stopScheduler: async () => { stopped = true; },
+    recordRun: async run => { runs.push(run); },
+  } });
+  await dispatch({ jobId: 'job', prompt: 'run test', threadId: 'fresh' });
+  const rows = await api.journal.listAfter('fresh', '0', 100);
+  assert.equal(rows[0].payload.type, 'scheduled');
+  assert.equal(rows.at(-1).payload.type, 'approval');
+  assert.equal(runs[0].status, 'paused');
+  assert.deepEqual(fixture.executions, []);
+  const pending = await api.json('fresh/pending');
+  const retry = await dispatch({ jobId: 'job2', prompt: 'hello', threadId: 'fresh' });
+  assert.ok(retry.retryAt > new Date());
+  assert.deepEqual(await api.json('fresh/pending'), pending);
+  terminal(await api.stream('fresh/resume', { answers: { [pending[0].id]: true } }), 'done');
+  assert.deepEqual(fixture.executions, ['test-1']);
+  await dispatch({ jobId: 'job3', prompt: 'hello', threadId: 'fresh' });
+  assert.equal(runs.at(-1).status, 'success');
+  assert.equal(runs.at(-1).threadId, 'fresh');
+  await api.close(); assert.equal(stopped, true);
+});
+
+test('scheduled turns defer while busy, never recreate deleted bound threads, and catalogue standalone results', { timeout: TIMEOUT }, async t => {
+  const release = deferred(); t.after(() => release.resolve());
+  const entered = deferred(); const runs = [];
+  const api = await server(t, fakeAgent(async function* () { entered.resolve(); await bounded(release.promise); yield doneUpdate(); }), { runtime: { recordRun: async run => runs.push(run) } });
+  await api.json('busy/messages', { body: { message: 'hello' } }, 202);
+  await bounded(entered.promise);
+  assert.ok((await api.service.dispatchScheduled({ jobId: 'busy-job', prompt: 'hello', threadId: 'busy' })).retryAt);
+  release.resolve();
+  await assert.rejects(api.service.dispatchScheduled({ jobId: 'missing-job', prompt: 'hello', threadId: 'deleted' }), e => e.status === 404);
+  assert.equal(await api.store.get('deleted'), null);
+  assert.equal(runs.at(-1).status, 'failed');
+  await api.service.dispatchScheduled({ jobId: 'legacy-job', prompt: 'hello', threadId: 'scheduled-legacy-job', standalone: true });
+  const standalone = runs.at(-1);
+  assert.equal(standalone.status, 'success');
+  assert.ok(await api.store.get(standalone.threadId));
+  assert.equal((await api.journal.listAfter(standalone.threadId, '0', 100))[0].payload.type, 'scheduled');
 });

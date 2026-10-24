@@ -42,7 +42,7 @@ test('runTurn emits route, tool, skill and memory events and consumes the whole 
     reply('final'),
   ]);
   const events = [];
-  assert.equal((await startTurn(agent, 'hello', 't', { ...options(), onEvent: e => events.push(e) })).text, 'final');
+  assert.equal((await startTurn(agent, 'hello', 't', { ...options(), onEvent: async e => { events.push(e); } })).text, 'final');
   assert.deepEqual(events, [
     { type: 'route', choice: 'powerful', confidence: 0.8 },
     { type: 'tool_call', name: 'exec_bash_command', args: { command: 'pwd' }, toolCallId: '1' },
@@ -146,7 +146,7 @@ for (const confidence of [0, 0.0003665156881398346, 0.8]) {
       reply('answer'),
     ]);
     const events = [];
-    await startTurn(agent, 'maths', 'route', { ...options(), onEvent: e => events.push(e) });
+    await startTurn(agent, 'maths', 'route', { ...options(), onEvent: async e => { events.push(e); } });
     assert.deepEqual(events, [{ type: 'route', choice: 'fast', confidence, probabilities }]);
   });
 }
@@ -161,10 +161,94 @@ test('tool updates emit each result with its call id before the final reply', as
     reply('finished'),
   ]);
   const events = [];
-  const result = await startTurn(agent, 'x', 't', { ...options(), onEvent: e => events.push(e) });
+  const result = await startTurn(agent, 'x', 't', { ...options(), onEvent: async e => { events.push(e); } });
   assert.deepEqual(events, [
     { type: 'tool_result', name: 'exec_bash_command', toolCallId: 'call-1', output: 'first output', truncated: false },
     { type: 'tool_result', name: 'exec_bash_command', toolCallId: 'call-2', output: 'second output', truncated: false },
   ]);
   assert.deepEqual(result, { kind: 'done', text: 'finished' });
+});
+
+const asynchronousEventCases = [
+  ['route', { 'TypeSafeModelRouterMiddleware.before_agent': { modelRoute: { choice: 'fast', confidence: 0.8 } } }],
+  ...[
+    ['tool_call', 'exec_bash_command', { command: 'pwd' }],
+    ['skill', 'load_skill', { name: 'haiku' }],
+    ['memory', 'recall_memory', { name: 'User' }],
+  ].map(([type, name, args]) => [type, { model_request: { messages: [new AIMessage({ content: '', tool_calls: [{ name, args, id: type }] })] } }]),
+  ['tool_result', { tools: { messages: [new ToolMessage({ content: 'output', name: 'exec_bash_command', tool_call_id: 'tool_call' })] } }],
+];
+
+test('all event writes finish in order before a turn completes, including calls and results in one batch', async () => {
+  const calls = new AIMessage({ content: '', tool_calls: [
+    { id: 'a', name: 'exec_bash_command', args: { command: 'pwd' } },
+    { id: 'b', name: 'load_skill', args: { name: 'haiku' } },
+    { id: 'c', name: 'recall_memory', args: { name: 'User' } },
+  ] });
+  const agent = streamed([
+    asynchronousEventCases[0][1],
+    { model_request: { messages: [calls] } },
+    { tools: { messages: [
+      new ToolMessage({ content: 'first', name: 'exec_bash_command', tool_call_id: 'a' }),
+      new ToolMessage({ content: 'second', name: 'load_skill', tool_call_id: 'b' }),
+    ] } },
+    reply('finished'),
+  ]);
+  const writes = [];
+  try {
+    const result = await startTurn(agent, 'x', 'async-events', {
+      ...options(),
+      onEvent: async event => {
+        const key = event.toolCallId ?? event.type;
+        writes.push(`start:${key}`);
+        await new Promise(resolve => setImmediate(resolve));
+        writes.push(`saved:${key}`);
+      },
+    });
+    writes.push('done');
+    assert.deepEqual(writes, [
+      'start:route', 'saved:route',
+      'start:a', 'saved:a',
+      'start:b', 'saved:b',
+      'start:c', 'saved:c',
+      'start:a', 'saved:a',
+      'start:b', 'saved:b',
+      'done',
+    ]);
+    assert.deepEqual(result, { kind: 'done', text: 'finished' });
+  } finally {
+    // Drain callbacks even when the regression assertion fails.
+    await new Promise(resolve => setImmediate(resolve));
+  }
+});
+
+for (const [type, update] of asynchronousEventCases) {
+  test(`a rejected ${type} write rejects the turn and closes its iterator`, async () => {
+    const failure = Promise.reject(new Error(`${type} persistence failed`));
+    // Mark the promise handled even if a broken implementation ignores it.
+    failure.catch(() => {});
+    let closed = false;
+    let advanced = false;
+    const agent = streamed();
+    agent.app.stream = async () => (async function* () {
+      try {
+        yield update;
+        advanced = true;
+        yield reply('must not finish');
+      } finally { closed = true; }
+    })();
+    await assert.rejects(startTurn(agent, 'x', 'write-failure', {
+      ...options(), onEvent: () => failure,
+    }), new RegExp(`${type} persistence failed`));
+    assert.equal(advanced, false);
+    assert.equal(closed, true);
+  });
+}
+
+test('server scheduling context reaches tools while CLI turns remain unbound', async () => {
+  const agent = streamed([reply('ok')], [reply('ok')]);
+  await startTurn(agent, 'schedule', 'server-thread', { ...options(), schedulerThreadId: 'server-thread' });
+  assert.equal(agent.inputs[0].config.configurable.scheduler_thread_id, 'server-thread');
+  await startTurn(agent, 'schedule', 'cli-thread', options());
+  assert.equal(agent.inputs[1].config.configurable.scheduler_thread_id, undefined);
 });

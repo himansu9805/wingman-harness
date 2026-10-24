@@ -16,9 +16,13 @@ body:json {
   }
 }
 
+script:post-response {
+  if (res.status === 202) bru.setVar("runId", res.getBody().runId);
+}
+
 tests {
-  test("finishes the turn", () => {
-    expect(res.status).to.equal(200);
-    expect(String(res.getBody())).to.contain("event: done");
+  test("accepts a background turn", () => {
+    expect(res.status).to.equal(202);
+    expect(res.getBody().runId).to.be.a("string");
   });
 }

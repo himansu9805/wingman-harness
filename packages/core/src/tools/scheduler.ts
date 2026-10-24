@@ -9,9 +9,9 @@ import {
 import { getRecentRuns } from "../scheduler/results";
 
 const scheduleTask = tool(
-  async ({ prompt, when }) => {
+  async ({ prompt, when }, config) => {
     try {
-      const id = await scheduleOnce(when, { prompt });
+      const id = await scheduleOnce(when, { prompt, ...(config.configurable?.scheduler_thread_id ? { threadId: String(config.configurable.scheduler_thread_id) } : {}) });
       return `Scheduled task ${id} for ${when}. Tell the user what was scheduled and when.`;
     } catch (err) {
       return `Could not schedule task: ${(err as Error).message}`;
@@ -40,9 +40,9 @@ const scheduleTask = tool(
 );
 
 const scheduleRecurringTask = tool(
-  async ({ prompt, interval }) => {
+  async ({ prompt, interval }, config) => {
     try {
-      const id = await scheduleRecurring(interval, { prompt });
+      const id = await scheduleRecurring(interval, { prompt, ...(config.configurable?.scheduler_thread_id ? { threadId: String(config.configurable.scheduler_thread_id) } : {}) });
       return `Scheduled recurring task ${id} (${interval}). Tell the user what was scheduled and how often.`;
     } catch (err) {
       return `Could not schedule recurring task: ${(err as Error).message}`;
