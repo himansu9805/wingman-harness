@@ -12,7 +12,7 @@ import { TokenGuard } from "./auth/token.guard";
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
-    origin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
+    origin: process.env.WEB_ORIGIN ?? ["http://localhost:5173", "http://127.0.0.1:5173"],
     allowedHeaders: ["Authorization", "Content-Type", "Last-Event-ID"],
   });
   app.useGlobalGuards(new TokenGuard());
