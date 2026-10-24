@@ -10,12 +10,13 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @wingman/core && npm run build -w @wingman/cli && npm run build -w @wingman/server",
+    "build": "npm run build -w @wingman/core && npm run build -w @wingman/cli && npm run build -w @wingman/server && npm run build -w @wingman/web",
     "dev:cli": "npm run dev -w @wingman/cli",
     "dev:server": "npm run build -w @wingman/core && concurrently -k -n core,server \"npm run dev -w @wingman/core\" \"npm run dev -w @wingman/server\"",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run build -w @wingman/core && npm run test --workspaces --if-present",
-    "test:postgres": "npm run build -w @wingman/core && npm run test:postgres -w @wingman/server"
+    "test:postgres": "npm run build -w @wingman/core && npm run test:postgres -w @wingman/server",
+    "dev:web": "npm run dev -w @wingman/web"
   },
   "keywords": [],
   "author": "",

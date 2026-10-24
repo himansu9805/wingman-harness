@@ -33,3 +33,7 @@ RULES:
   docs authoring     build an integration package, and every field it holds
   upgrade --from <old version> --apply   run after a dependency bump
 <!-- ASTRYX:END -->
+
+## Web styling and icons
+
+Use Lucide React for application icons. Custom styles use `stylex.create` and Astryx `xstyle` props (or `stylex.props` on native elements), compiled by `@stylexjs/unplugin` in Vite. This compiler is now configured; the generated setup note above about no StyleX compiler is superseded. Keep design tokens for spacing and typography. Node component tests load `tests/stylex-register.mjs` to compile StyleX macros as well.

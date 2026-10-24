@@ -6,10 +6,31 @@
   "type": "module",
   "dependencies": {
     "@astryxdesign/core": "^0.7.4",
+    "@astryxdesign/theme-neutral": "^0.7.4",
     "@stylexjs/stylex": "^0.19.1",
-    "@astryxdesign/theme-neutral": "^0.7.4"
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@astryxdesign/cli": "^0.7.4"
+    "@astryxdesign/cli": "^0.7.4",
+    "@babel/core": "^7.29.7",
+    "@stylexjs/babel-plugin": "^0.19.1",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "jsdom": "^29.1.1",
+    "vite": "^8.3.5"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --import ./tests/stylex-register.mjs --test tests/*.test.mjs",
+    "check:design": "astryx doctor --built .",
+    "dev:test-api": "npm run build -w @wingman/core && npm run build -w @wingman/server && node tests/fixtures/server.mjs"
   }
 }
