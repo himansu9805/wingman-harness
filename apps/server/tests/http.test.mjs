@@ -136,7 +136,7 @@ async function server(t, agent, options = {}) {
       }
     } finally { subscription.abort(); await reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
-  return { request, json, stream, store, journal };
+  return { request, json, stream, store, journal, close: async () => { const closing = app; app = null; await closing.close(); assert.equal(closed, 1); } };
 }
 
 function events(text) {
@@ -658,4 +658,35 @@ test('disconnecting an event subscriber preserves execution and replay finds the
   const replayReader = replay.body.getReader();
   try { assert.match(new TextDecoder().decode((await replayReader.read()).value), /event: done/); }
   finally { await replayReader.cancel(); }
+});
+
+test('deleting a thread ends subscribers and removes its journal', { timeout: TIMEOUT }, async t => {
+  const api = await server(t, createApprovalAgent().agent);
+  await api.stream('fresh/messages', { message: 'hello' });
+  const response = await api.request('fresh/events', { headers: { 'last-event-id': 'fresh:1' } });
+  const reader = response.body.getReader();
+  assert.equal((await api.request('fresh', { method: 'DELETE' })).status, 204);
+  assert.equal((await reader.read()).done, true);
+  assert.deepEqual(await api.journal.listAfter('fresh', '0', 100), []);
+});
+
+test('shutdown aborts background work and closes idle event subscriptions', { timeout: TIMEOUT }, async t => {
+  const entered = deferred();
+  let signal;
+  let terminal;
+  const api = await server(t, fakeAgent(async function* (_input, options) {
+    signal = options.signal; entered.resolve();
+    await bounded(new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })));
+    signal.throwIfAborted();
+  }));
+  const append = api.journal.append.bind(api.journal);
+  api.journal.append = async (...args) => { if (args[2].type === 'error') terminal = args[2]; return append(...args); };
+  await api.json('fresh/messages', { body: { message: 'hello' } }, 202);
+  await bounded(entered.promise);
+  const subscription = await api.request('independent/events');
+  const reader = subscription.body.getReader();
+  await api.close();
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(terminal, { type: 'error', message: 'Server stopped the turn' });
+  assert.equal((await reader.read()).done, true);
 });

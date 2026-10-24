@@ -17,3 +17,12 @@ test('failed preparation releases reservation without executing', async()=>{
  const r=new runner.TurnRunner();await assert.rejects(r.accept('a',async()=>{throw Error('invalid')}),/invalid/);
  const run=await r.accept('a',async()=>async()=>{});await run.completion;await r.close();
 });
+
+test('shutdown drains deletion mutations before repositories can close', async () => {
+ const r = new runner.TurnRunner(); const gate = deferred(); let closed = false;
+ const deletion = r.exclusive('thread', async () => { await gate.promise; assert.equal(closed, false); });
+ const shutdown = r.close().then(() => { closed = true; });
+ await Promise.resolve(); assert.equal(closed, false);
+ await assert.rejects(r.exclusive('other', async () => {}), e => e.status === 503);
+ gate.resolve(); await Promise.all([deletion, shutdown]); assert.equal(closed, true);
+});

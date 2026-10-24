@@ -49,8 +49,9 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       await this.events.init();
       this.agent = await this.runtime.create();
     } catch (error) {
-      await this.events.close();
-      await this.threads.close();
+      try { await this.runtime.close(); } finally {
+        try { await this.events.close(); } finally { await this.threads.close(); }
+      }
       throw error;
     }
   }

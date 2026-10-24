@@ -13,6 +13,7 @@ export class TurnRunner {
   private readonly logger = new Logger(TurnRunner.name);
   private readonly busy = new Set<string>();
   private readonly active = new Map<string, ActiveRun>();
+  private readonly mutations = new Set<Promise<unknown>>();
   private stopping = false;
   private readonly shutdown = new AbortController();
   get shutdownSignal(): AbortSignal { return this.shutdown.signal; }
@@ -50,7 +51,9 @@ export class TurnRunner {
 
   async exclusive<T>(threadId: string, run: () => Promise<T>): Promise<T> {
     this.reserve(threadId);
-    try { return await run(); } finally { this.busy.delete(threadId); }
+    const completion = Promise.resolve().then(run);
+    this.mutations.add(completion);
+    try { return await completion; } finally { this.mutations.delete(completion); this.busy.delete(threadId); }
   }
 
   async close(): Promise<void> {
@@ -58,6 +61,6 @@ export class TurnRunner {
     this.shutdown.abort();
     const runs = [...this.active.values()];
     for (const run of runs) run.controller.abort(new Error("Server is shutting down"));
-    await Promise.allSettled(runs.map(run => run.completion));
+    await Promise.allSettled([...runs.map(run => run.completion), ...this.mutations]);
   }
 }
