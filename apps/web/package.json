@@ -1,0 +1,15 @@
+{
+  "name": "@wingman/web",
+  "version": "1.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@astryxdesign/core": "^0.7.4",
+    "@stylexjs/stylex": "^0.19.1",
+    "@astryxdesign/theme-neutral": "^0.7.4"
+  },
+  "devDependencies": {
+    "@astryxdesign/cli": "^0.7.4"
+  }
+}
