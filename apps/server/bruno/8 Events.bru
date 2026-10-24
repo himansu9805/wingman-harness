@@ -1,0 +1,19 @@
+meta {
+  name: Events
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/threads/{{threadId}}/events
+  body: none
+  auth: inherit
+}
+
+docs {
+  Persistent SSE subscription. Run alongside Send message or Resume.
+  Each frame has id: <threadId>:<sequence> and data.runId.
+  The connection stays open after done/approval/error; stop it manually.
+  Use Pending to capture approvalId before Approve or Deny.
+  Use Replay events with the last received id to reconnect.
+}
