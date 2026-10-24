@@ -118,8 +118,10 @@ const executeBashCommand = tool(
       if (!approved) {
         return JSON.stringify({
           error:
-            "Declined: the user chose not to run this command. Don't retry it. " +
-            "Ask the user how they'd like to proceed.",
+            "Declined: the user chose not to run this command. Don't retry " +
+            "it or a variant on your own. Wait for the user's next instruction. " +
+            "If the user explicitly asks to run it again, call this tool for " +
+            "fresh approval. The retry request itself is not approval.",
         });
       }
     }
