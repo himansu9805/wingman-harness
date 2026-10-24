@@ -31,6 +31,13 @@ export class ThreadsController {
     return this.agent.messages(parse(ThreadId, threadId), limit, cursor);
   }
 
+  /** Latest durable metadata for each run, newest first. */
+  @Get(":threadId/runs")
+  runs(@Param("threadId") threadId: string, @Query() query: unknown) {
+    const { limit, cursor } = parse(ListQuery, query);
+    return this.agent.runs(parse(ThreadId, threadId), limit, cursor);
+  }
+
   @Delete(":threadId")
   @HttpCode(204)
   async delete(@Param("threadId") threadId: string) {

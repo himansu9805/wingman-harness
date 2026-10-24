@@ -22,13 +22,13 @@ class ApprovalModel extends BaseChatModel {
     } else if (request === 'run twice' && results.length === 1) {
       calls = [{ name: 'test_action', args: { command: 'test-2' }, id: 'call-2', type: 'tool_call' }];
     }
-    const message = new AIMessage({ content: calls.length ? '' : results.length ? results.map(m => m.text).join(', ') : request, tool_calls: calls });
+    const message = new AIMessage({ content: calls.length ? '' : results.length ? results.map(m => m.text).join(', ') : request, tool_calls: calls, ...(this.usage ? { usage_metadata: this.usage } : {}) });
     return { generations: [{ text: message.text, message }] };
   }
 }
 
 /** A real agent/checkpointer with a harmless, observable tool side effect. */
-export function createApprovalAgent({ checkpointer = new MemorySaver() } = {}) {
+export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } = {}) {
   const executions = [];
   const action = tool(async ({ command }) => {
     const approved = interrupt({ kind: 'bash_approval', command });
@@ -36,5 +36,7 @@ export function createApprovalAgent({ checkpointer = new MemorySaver() } = {}) {
     executions.push(command);
     return `executed ${command}`;
   }, { name: 'test_action', description: 'Test action requiring approval', schema: z.object({ command: z.string() }) });
-  return { agent: { app: createAgent({ model: new ApprovalModel({}), tools: [action], checkpointer }) }, executions };
+  const model = new ApprovalModel({});
+  model.usage = usage;
+  return { agent: { app: createAgent({ model, tools: [action], checkpointer }) }, executions };
 }

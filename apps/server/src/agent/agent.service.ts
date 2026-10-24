@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+import { addUsage, emptyUsage, startMetadata, finishMetadata, type RunMetadata } from "./run-metadata";
 import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
@@ -28,7 +30,7 @@ import {
 import { decodeCursor, encodeCursor } from "../threads/cursors";
 import { TurnRunner } from "./turn-runner.service";
 import { THREAD_EVENTS, type ThreadEventsRepository } from "../threads/thread-events.repository";
-import { HistoryCursor, ListCursor } from "../threads/schemas";
+import { HistoryCursor, ListCursor, RunCursor } from "../threads/schemas";
 
 /** Owns the agent and serializes mutations of each API-managed thread. */
 @Injectable()
@@ -139,20 +141,54 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       if (!ids.size) throw new ConflictException("Nothing is waiting for approval");
       if (given.length !== ids.size || !given.every(id => ids.has(id)))
         throw new BadRequestException("Answer every pending approval by id");
-      return async (runId, signal) => { await this.execute(threadId, runId, signal, options => resumeTurn(this.agent, answers, threadId, options)); };
+      return async (runId, signal) => { await this.execute(threadId, runId, signal, options => resumeTurn(this.agent, answers, threadId, options), "resume"); };
     });
     return { runId: accepted.runId };
   }
 
-  private async execute(threadId: string, runId: string, signal: AbortSignal, run: (options: TurnOptions) => Promise<TurnResult>): Promise<TurnResult> {
+  async runs(threadId: string, limit: number, cursor?: string) {
+    await this.requireThread(threadId);
+    const position = cursor ? decodeCursor(RunCursor, cursor) : undefined;
+    if (position && position.threadId !== threadId) throw new BadRequestException("Cursor belongs to another thread");
+    const rows = await this.events.listRuns(threadId, position?.before, limit);
+    const last = rows.at(-1);
+    const more = last && (await this.events.listRuns(threadId, last.sequence, 1)).length > 0;
+    return { runs: rows.flatMap(row => row.payload.type === "run" ? [row.payload.metadata] : []),
+      nextCursor: more && last ? encodeCursor({ threadId, before: last.sequence }) : null };
+  }
+
+  private async execute(threadId: string, runId: string, signal: AbortSignal, run: (options: TurnOptions) => Promise<TurnResult>, origin: RunMetadata["origin"] = "message"): Promise<TurnResult> {
+    const previousRow = (await this.events.listRuns(threadId, undefined, 1))[0];
+    const previous = previousRow?.payload.type === "run" ? previousRow.payload.metadata : undefined;
+    const now = new Date();
+    // Sending a new prompt abandons a previous approval instead of resuming it.
+    if (origin !== "resume" && previous?.status === "paused") {
+      const closed = { ...previous, status: "interrupted" as const,
+        turn: { ...previous.turn, completedAt: now.toISOString(),
+          elapsedMs: Math.max(0, now.getTime() - Date.parse(previous.turn.startedAt)),
+          approvalWaitMs: previous.turn.approvalWaitMs + Math.max(0, now.getTime() - Date.parse(previous.finishedAt!)) } };
+      await this.events.append(threadId, previous.runId, { type: "run", metadata: closed });
+    }
+    const metadata = startMetadata(runId, origin, now, previous);
+    const started = performance.now();
+    let usage = emptyUsage();
+    await this.events.append(threadId, runId, { type: "run", metadata });
+    const finish = async (status: Parameters<typeof finishMetadata>[1]) => {
+      const finished = finishMetadata(metadata, status, new Date(), Math.max(0, Math.round(performance.now() - started)), usage);
+      await this.events.append(threadId, runId, { type: "run", metadata: finished });
+    };
     try {
-      const result = await run({ signal, schedulerThreadId: threadId, onEvent: async payload => { await this.events.append(threadId, runId, payload); } });
+      const result = await run({ signal, schedulerThreadId: threadId,
+        onModelUsage: async counts => { usage = addUsage(usage, counts); await finish("running"); },
+        onEvent: async payload => { await this.events.append(threadId, runId, payload); } });
       await this.threads.touch(threadId);
+      await finish(result.kind === "paused" ? "paused" : "completed");
       await this.events.append(threadId, runId, result.kind === "paused"
         ? { type: "approval", approvals: result.interrupts.map(it => ({ id: it.id!, command: it.value!.command })) }
         : { type: "done", text: result.text });
       return result;
     } catch (error) {
+      await finish(signal.aborted ? "interrupted" : "failed");
       await this.events.append(threadId, runId, { type: "error", message: signal.aborted ? "Server stopped the turn" : "Turn failed; check server logs" });
       throw error;
     }
@@ -175,7 +211,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
         return async (runId, signal) => {
           await this.events.append(threadId, runId, { type: "scheduled", jobId: event.jobId, prompt: event.prompt });
           result = await this.execute(threadId, runId, signal, options => startTurn(this.agent,
-            `This task was scheduled earlier and is due now: ${event.prompt}\nCarry it out now. Your reply is the result delivered to the user. Do not schedule it again. Commands requiring approval must wait for the user's decision.`, threadId, options));
+            `This task was scheduled earlier and is due now: ${event.prompt}\nCarry it out now. Your reply is the result delivered to the user. Do not schedule it again. Commands requiring approval must wait for the user's decision.`, threadId, options), "scheduled");
         };
       });
       acceptedRun = true;

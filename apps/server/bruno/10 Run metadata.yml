@@ -1,0 +1,36 @@
+info:
+  name: Run metadata
+  type: http
+  seq: 10
+
+http:
+  method: GET
+  url: "{{baseUrl}}/threads/{{threadId}}/runs?limit=20"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("200", () => {
+          expect(res.status).to.equal(200);
+          expect(res.getBody().runs).to.be.an("array");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Returns the latest persisted snapshot of each run, newest first.
+  Continue with &cursor=<nextCursor> while nextCursor is non-null.
+  runId matches the accepted POST; turnId correlates approval/resume segments.
+  finishedAt ends a segment; turn.completedAt is null while paused or running.
+  processingMs includes model calls, tools and server work, excluding approval waiting.
+  turn contains cumulative processingMs, approvalWaitMs, elapsedMs and usage.
+  Token counts are provider-reported. Null means unavailable; availability may be partial.
+  usage.scope is agent: routing classifier usage is excluded. Token subsets are not extra totals.
+  SSE run events expose the same snapshots; every SSE event includes createdAt.
