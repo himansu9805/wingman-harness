@@ -3,6 +3,7 @@ import { Command, type Interrupt } from "@langchain/langgraph";
 import type { Agent } from "./agent";
 import type { CommandApproval } from "../tools/bash";
 import { MEMORY_TOOL_NAMES } from "../tools/names";
+import { modelUsage, type ModelUsage } from "./usage";
 import { previewToolOutput } from "./tool-output";
 
 
@@ -37,6 +38,8 @@ export interface TurnOptions {
   signal: AbortSignal;
   /** Awaited before processing the next event. */
   onEvent?: TurnEventHandler;
+  /** Called once per newly generated model message, including tool requests. */
+  onModelUsage?: (usage: ModelUsage) => Promise<void>;
   /** Bind server-created scheduled jobs to their catalogue thread. */
   schedulerThreadId?: string;
 }
@@ -118,15 +121,20 @@ export async function runTurn(
   agent: Agent,
   input: TurnInput,
   threadId: string,
-  { signal, onEvent = async () => {}, schedulerThreadId }: TurnOptions,
+  { signal, onEvent = async () => {}, onModelUsage = async () => {}, schedulerThreadId }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
     configurable: { thread_id: threadId, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
     streamMode: "updates",
+    callbacks: [{ handleLLMError: async () => {
+      await onModelUsage({ inputTokens: null, outputTokens: null, totalTokens: null,
+        cachedInputTokens: null, reasoningOutputTokens: null });
+    } }],
     signal,
   });
 
   let finalMessage: AIMessage | undefined;
+  const usageMessageIds = new Set<string>();
   const interrupts: Interrupt<CommandApproval>[] = [];
 
   for await (const update of stream) {
@@ -162,6 +170,10 @@ export async function runTurn(
     const message = modelUpdate.messages[modelUpdate.messages.length - 1];
     if (!AIMessage.isInstance(message)) {
       continue;
+    }
+    if (!message.id || !usageMessageIds.has(message.id)) {
+      if (message.id) usageMessageIds.add(message.id);
+      await onModelUsage(modelUsage(message));
     }
     if (message.tool_calls && message.tool_calls.length > 0) {
       await emitToolCalls(message, onEvent);

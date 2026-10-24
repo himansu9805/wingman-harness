@@ -1,8 +1,10 @@
+import type { RunMetadata } from "../agent/run-metadata";
 import type { Pool } from "pg";
 import type { ThreadRepository } from "./thread.repository";
 import type { PendingApproval, TurnEvent } from "@wingman/core/turns";
 
 export type ThreadEventPayload =
+  | { type: "run"; metadata: RunMetadata }
   | TurnEvent
   | { type: "approval"; approvals: PendingApproval[] }
   | { type: "done"; text: string }
@@ -35,6 +37,8 @@ export interface ThreadEventsRepository {
   ): Promise<StoredThreadEvent[]>;
 
   latest(threadId: string): Promise<string>;
+
+  listRuns(threadId: string, before: string | undefined, limit: number): Promise<StoredThreadEvent[]>;
 
   delete(threadId: string): Promise<void>;
 
@@ -72,6 +76,7 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
       thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
       sequence BIGINT NOT NULL, run_id UUID NOT NULL, payload JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (thread_id, sequence))`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS thread_events_runs_idx ON thread_events (thread_id, run_id, sequence DESC) WHERE payload->>'type'='run'`);
   }
   async append(threadId: string, runId: string, payload: ThreadEventPayload): Promise<StoredThreadEvent> {
     const result = await (await this.pool()).query<EventRow>(`WITH next_event AS (
@@ -84,6 +89,14 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
   async listAfter(threadId: string, sequence: string, limit: number): Promise<StoredThreadEvent[]> {
     validatePage(sequence, limit);
     const result = await (await this.pool()).query<EventRow>(`SELECT * FROM thread_events WHERE thread_id = $1 AND sequence > $2::bigint ORDER BY sequence LIMIT $3`, [threadId, sequence, limit]);
+    return result.rows.map(eventRecord);
+  }
+  async listRuns(threadId: string, before: string | undefined, limit: number): Promise<StoredThreadEvent[]> {
+    validatePage(before ?? "0", limit);
+    const result = await (await this.pool()).query<EventRow>(`SELECT * FROM (
+      SELECT DISTINCT ON (run_id) * FROM thread_events WHERE thread_id=$1 AND payload->>'type'='run'
+      ORDER BY run_id, sequence DESC
+    ) latest WHERE ($2::bigint IS NULL OR sequence < $2::bigint) ORDER BY sequence DESC LIMIT $3`, [threadId, before ?? null, limit]);
     return result.rows.map(eventRecord);
   }
   async latest(threadId: string): Promise<string> {
@@ -120,6 +133,13 @@ export class MemoryThreadEventsRepository implements ThreadEventsRepository {
   async listAfter(threadId: string, sequence: string, limit: number): Promise<StoredThreadEvent[]> {
     this.assertOpen(); validatePage(sequence, limit);
     return structuredClone((this.rows.get(threadId) ?? []).filter(row => BigInt(row.sequence) > BigInt(sequence)).slice(0, limit));
+  }
+  async listRuns(threadId: string, before: string | undefined, limit: number): Promise<StoredThreadEvent[]> {
+    this.assertOpen(); validatePage(before ?? "0", limit);
+    const latest = new Map<string, StoredThreadEvent>();
+    for (const row of this.rows.get(threadId) ?? []) if (row.payload.type === "run") latest.set(row.runId, row);
+    return structuredClone([...latest.values()].sort((a, b) => BigInt(a.sequence) > BigInt(b.sequence) ? -1 : 1)
+      .filter(row => before === undefined || BigInt(row.sequence) < BigInt(before)).slice(0, limit));
   }
   async latest(threadId: string): Promise<string> { this.assertOpen(); return String(this.sequences.get(threadId) ?? 0n); }
   async delete(threadId: string): Promise<void> { this.assertOpen(); this.rows.delete(threadId); }

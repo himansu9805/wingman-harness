@@ -129,7 +129,9 @@ async function server(t, agent, options = {}) {
           if (frame.startsWith(':')) continue;
           const parsed = events(frame)[0];
           if (parsed.data.runId !== runId) continue;
-          const { runId: ignored, type: payloadType, ...data } = parsed.data;
+          assert.ok(Number.isFinite(Date.parse(parsed.data.createdAt)), 'SSE events expose durable timestamps');
+          if (parsed.type === 'run') continue; // Existing behavior assertions exclude metadata snapshots.
+          const { runId: ignored, createdAt: timestamp, type: payloadType, ...data } = parsed.data;
           frames.push({ type: parsed.type, data: ['done', 'approval', 'error'].includes(parsed.type) ? data : { type: payloadType, ...data } });
           if (['done', 'approval', 'error'].includes(parsed.type)) return frames;
         }
@@ -666,21 +668,21 @@ test('deleting a thread ends subscribers and removes its journal', { timeout: TI
   const response = await api.request('fresh/events', { headers: { 'last-event-id': 'fresh:1' } });
   const reader = response.body.getReader();
   assert.equal((await api.request('fresh', { method: 'DELETE' })).status, 204);
-  assert.equal((await reader.read()).done, true);
+  while (!(await reader.read()).done) { /* Drain already-buffered metadata before EOF. */ }
   assert.deepEqual(await api.journal.listAfter('fresh', '0', 100), []);
 });
 
 test('shutdown aborts background work and closes idle event subscriptions', { timeout: TIMEOUT }, async t => {
   const entered = deferred();
   let signal;
-  let terminal;
+  let terminal; let interrupted;
   const api = await server(t, fakeAgent(async function* (_input, options) {
     signal = options.signal; entered.resolve();
     await bounded(new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })));
     signal.throwIfAborted();
   }));
   const append = api.journal.append.bind(api.journal);
-  api.journal.append = async (...args) => { if (args[2].type === 'error') terminal = args[2]; return append(...args); };
+  api.journal.append = async (...args) => { if (args[2].type === 'error') terminal = args[2]; if (args[2].type === 'run' && args[2].metadata.status === 'interrupted') interrupted = args[2].metadata; return append(...args); };
   await api.json('fresh/messages', { body: { message: 'hello' } }, 202);
   await bounded(entered.promise);
   const subscription = await api.request('independent/events');
@@ -688,7 +690,9 @@ test('shutdown aborts background work and closes idle event subscriptions', { ti
   await api.close();
   assert.equal(signal.aborted, true);
   assert.deepEqual(terminal, { type: 'error', message: 'Server stopped the turn' });
-  assert.equal((await reader.read()).done, true);
+  assert.ok(interrupted.finishedAt);
+  assert.ok(interrupted.turn.completedAt);
+  while (!(await reader.read()).done) { /* Drain already-buffered metadata before EOF. */ }
 });
 
 test('server scheduler delivers results and approvals on the originating thread', { timeout: TIMEOUT }, async t => {
@@ -704,6 +708,9 @@ test('server scheduler delivers results and approvals on the originating thread'
   assert.equal(rows[0].payload.type, 'scheduled');
   assert.equal(rows.at(-1).payload.type, 'approval');
   assert.equal(runs[0].status, 'paused');
+  const scheduledMetadata = (await api.json('fresh/runs')).runs[0];
+  assert.equal(scheduledMetadata.origin, 'scheduled');
+  assert.equal(scheduledMetadata.status, 'paused');
   assert.deepEqual(fixture.executions, []);
   const pending = await api.json('fresh/pending');
   const retry = await dispatch({ jobId: 'job2', prompt: 'hello', threadId: 'fresh' });
@@ -733,4 +740,70 @@ test('scheduled turns defer while busy, never recreate deleted bound threads, an
   assert.equal(standalone.status, 'success');
   assert.ok(await api.store.get(standalone.threadId));
   assert.equal((await api.journal.listAfter(standalone.threadId, '0', 100))[0].payload.type, 'scheduled');
+});
+
+test('run metadata aggregates real model calls across approval resumes and is replayable and paginated', { timeout: TIMEOUT }, async t => {
+  const fixture = createApprovalAgent({ usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 } });
+  const api = await server(t, fixture.agent);
+  const approval = terminal(await api.stream('approval/messages', { message: 'run test' }), 'approval').approvals[0];
+  const paused = (await api.json('approval/runs')).runs[0];
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.turn.completedAt, null);
+  assert.equal(paused.usage.totalTokens, 12);
+  assert.equal(paused.usage.availability, 'complete');
+  assert.equal(paused.usage.scope, 'agent');
+  terminal(await api.stream('approval/resume', { answers: { [approval.id]: true } }), 'done');
+  const page = await api.json('approval/runs?limit=1');
+  const done = page.runs[0];
+  assert.equal(done.status, 'completed');
+  assert.equal(done.turnId, paused.turnId);
+  assert.equal(done.parentRunId, paused.runId);
+  assert.equal(done.usage.modelCalls, 1);
+  assert.equal(done.turn.usage.modelCalls, 2);
+  assert.equal(done.turn.usage.totalTokens, 24);
+  assert.ok(Date.parse(done.turn.completedAt) >= Date.parse(done.startedAt));
+  assert.ok(done.approvalWaitMs >= 0);
+  assert.ok(done.turn.processingMs >= done.processingMs);
+  assert.ok(page.nextCursor);
+  const older = await api.json(`approval/runs?limit=1&cursor=${page.nextCursor}`);
+  assert.equal(older.runs[0].runId, paused.runId);
+  assert.equal(older.nextCursor, null);
+  await api.json(`fresh/runs?cursor=${page.nextCursor}`, undefined, 400);
+  await api.json('approval/runs?limit=101', undefined, 400);
+  await api.json('missing/runs', undefined, 404);
+  await api.json('approval/runs', { authorization: null }, 401);
+  // Replay the actual SSE transport and compare its final snapshot to the read API.
+  const response = await api.request('approval/events');
+  const reader = response.body.getReader();
+  let text = '';
+  try {
+    while (!text.includes('event: done\n')) {
+      const chunk = await reader.read(); assert.equal(chunk.done, false);
+      text += new TextDecoder().decode(chunk.value);
+    }
+    const replay = events(text).filter(event => event.type === 'run' && event.data.runId === done.runId);
+    assert.deepEqual(replay.at(-1).data.metadata, done);
+    assert.ok(replay.every(event => Number.isFinite(Date.parse(event.data.createdAt))));
+  } finally { await reader.cancel(); }
+});
+
+test('run metadata exposes in-progress, missing usage and failed runs without false completion', { timeout: TIMEOUT }, async t => {
+  const gate = deferred(); t.after(() => gate.resolve());
+  const api = await server(t, fakeAgent(async function* () { await bounded(gate.promise); yield doneUpdate(); throw new Error('failure after generation'); }));
+  const { runId } = await api.json('fresh/messages', { body: { message: 'hello' } }, 202);
+  const active = (await api.json('fresh/runs')).runs[0];
+  assert.equal(active.runId, runId);
+  assert.equal(active.status, 'running');
+  assert.equal(active.finishedAt, null);
+  assert.equal(active.turn.completedAt, null);
+  gate.resolve();
+  await bounded((async () => {
+    while (!(await api.journal.listRuns('fresh', undefined, 1)).some(row => row.payload.metadata.status === 'failed')) await new Promise(resolve => setTimeout(resolve, 5));
+  })());
+  const failed = (await api.json('fresh/runs')).runs[0];
+  assert.equal(failed.status, 'failed');
+  assert.ok(failed.finishedAt);
+  assert.equal(failed.usage.availability, 'unavailable');
+  assert.equal(failed.usage.totalTokens, null);
+  assert.equal(failed.usage.missingCalls, 1);
 });

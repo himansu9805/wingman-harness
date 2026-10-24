@@ -2,7 +2,7 @@ import type { Response } from "express";
 import type { StoredThreadEvent } from "./thread-events.repository";
 
 export function eventFrame(row: StoredThreadEvent): string {
-  return `id: ${row.threadId}:${row.sequence}\nevent: ${row.payload.type}\ndata: ${JSON.stringify({ ...row.payload, runId: row.runId })}\n\n`;
+  return `id: ${row.threadId}:${row.sequence}\nevent: ${row.payload.type}\ndata: ${JSON.stringify({ ...row.payload, runId: row.runId, createdAt: row.createdAt })}\n\n`;
 }
 
 /** Await backpressure without retaining an unbounded queue for a slow client. */

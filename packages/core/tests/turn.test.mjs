@@ -252,3 +252,30 @@ test('server scheduling context reaches tools while CLI turns remain unbound', a
   await startTurn(agent, 'schedule', 'cli-thread', options());
   assert.equal(agent.inputs[1].config.configurable.scheduler_thread_id, undefined);
 });
+
+test('usage reports every model/tool-loop call once, keeps missing counts null, and awaits consumers', async () => {
+  const call = new AIMessage({ id: 'model-1', content: '', tool_calls: [{ id: 'tool', name: 'test', args: {} }],
+    usage_metadata: { input_tokens: 10, output_tokens: 2, total_tokens: 12,
+      input_token_details: { cache_read: 4 }, output_token_details: { reasoning: 1 } } });
+  const update = { model_request: { messages: [call] } };
+  const counts = [];
+  await startTurn(streamed([update, update, reply('done')]), 'hello', 'usage', {
+    ...options(), onModelUsage: async usage => { await Promise.resolve(); counts.push(usage); },
+  });
+  assert.deepEqual(counts, [
+    { inputTokens: 10, outputTokens: 2, totalTokens: 12, cachedInputTokens: 4, reasoningOutputTokens: 1 },
+    { inputTokens: null, outputTokens: null, totalTokens: null, cachedInputTokens: null, reasoningOutputTokens: null },
+  ]);
+});
+
+test('failed model calls report unavailable usage before propagating the error', async () => {
+  const counts = [];
+  const agent = streamed();
+  agent.app.stream = async (_input, config) => {
+    await config.callbacks[0].handleLLMError(new Error('provider failed'));
+    throw new Error('provider failed');
+  };
+  await assert.rejects(startTurn(agent, 'hello', 'failure', { ...options(), onModelUsage: async usage => { counts.push(usage); } }), /provider failed/);
+  assert.equal(counts.length, 1);
+  assert.equal(counts[0].totalTokens, null);
+});

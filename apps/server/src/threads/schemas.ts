@@ -34,3 +34,5 @@ export const HistoryCursor = z.object({
   checkpointId: z.string().min(1).max(200),
   end: z.number().int().nonnegative(),
 }).strict();
+
+export const RunCursor = z.object({ threadId: ThreadId, before: z.string().refine(value => /^[1-9][0-9]{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n) }).strict();

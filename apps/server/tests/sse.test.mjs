@@ -23,6 +23,6 @@ test('SSE waits for drain and cleans up listeners after drain, close and abort',
 });
 
 test('event frames carry durable IDs and correlate data with the accepted run', () => {
-  const frame = eventFrame({ threadId: 'abc', sequence: '42', runId: 'run', payload: { type: 'done', text: 'line\nline' } });
-  assert.equal(frame, 'id: abc:42\nevent: done\ndata: {"type":"done","text":"line\\nline","runId":"run"}\n\n');
+  const frame = eventFrame({ threadId: 'abc', sequence: '42', runId: 'run', createdAt: '2026-01-01T00:00:00.000Z', payload: { type: 'done', text: 'line\nline' } });
+  assert.equal(frame, 'id: abc:42\nevent: done\ndata: {"type":"done","text":"line\\nline","runId":"run","createdAt":"2026-01-01T00:00:00.000Z"}\n\n');
 });

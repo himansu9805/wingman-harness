@@ -17,7 +17,9 @@ settings:
 
 docs: |-
   Persistent SSE subscription. Run alongside Send message or Resume.
-  Each frame has id: <threadId>:<sequence> and data.runId.
+  Each frame has id: <threadId>:<sequence> and data.runId plus data.createdAt.
+  run events contain metadata snapshots (running, paused, completed, failed or interrupted).
+  Use Run metadata to read the latest snapshot of each run without keeping SSE open.
   The connection stays open after done/approval/error; stop it manually.
   Use Pending to capture approvalId before Approve or Deny.
   Use Replay events with the last received id to reconnect.
