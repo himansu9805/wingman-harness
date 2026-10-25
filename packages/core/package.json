@@ -14,11 +14,16 @@
       "types": "./dist/turns.d.ts",
       "development": "./src/turns.ts",
       "default": "./dist/turns.js"
+    },
+    "./tasks": {
+      "types": "./dist/tasks.d.ts",
+      "development": "./src/tasks.ts",
+      "default": "./dist/tasks.js"
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/turns.ts --format esm --clean && tsc --emitDeclarationOnly",
-    "dev": "tsup src/index.ts src/turns.ts --format esm --watch",
+    "build": "tsup src/index.ts src/turns.ts src/tasks.ts --format esm --clean && tsc --emitDeclarationOnly",
+    "dev": "tsup src/index.ts src/turns.ts src/tasks.ts --format esm --watch",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.*"
   },

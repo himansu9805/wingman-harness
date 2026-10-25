@@ -1,3 +1,4 @@
+import { closeResults } from "./scheduler/results";
 import { closeScheduler } from "./scheduler/scheduler";
 import { closeMcpTools } from "./mcp/mcp";
 import { GraphMemory } from "./memory/graph";
@@ -13,6 +14,7 @@ export function shutdown(): Promise<void> {
   shutdownPromise ??= (async () => {
     // Scheduler first, so a finishing scheduled turn can still save its state.
     await closeScheduler();
+    await closeResults();
     await closeMcpTools();
     await closeCheckpointer();
     await GraphMemory.getInstance().closeGraph();

@@ -1,0 +1,19 @@
+info:
+  name: Cancel scheduled task
+  type: http
+  seq: 12
+
+http:
+  method: DELETE
+  url: "{{baseUrl}}/tasks/{{taskId}}"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Set taskId explicitly from List scheduled tasks. Cancels future scheduling and returns 204, including when already removed. Locked or running tasks return 409; retry after execution finishes. Does not stop an active run or delete execution history.

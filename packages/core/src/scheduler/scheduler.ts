@@ -1,3 +1,5 @@
+import pg from "pg";
+import { taskPage, cancelUnlockedTask } from "./management";
 import { Agenda } from "agenda";
 import { PostgresBackend } from "@agendajs/postgres-backend";
 import { settings } from "../settings";
@@ -5,6 +7,7 @@ import type { AgentTaskData, JobDispatcher } from "./interfaces";
 import { AGENT_TASK_JOB, defineJobs } from "./jobs";
 
 let agenda: Agenda | null = null;
+let taskPool: pg.Pool | null = null;
 let started = false;
 
 /**
@@ -13,11 +16,11 @@ let started = false;
  * @returns The `Agenda` instance.
  */
 function getScheduler(): Agenda {
-  agenda ??= new Agenda({
-    backend: new PostgresBackend({
-      connectionString: settings.POSTGRES_CONNECTION_STRING,
-    }),
-  });
+  taskPool ??= new pg.Pool({ connectionString: settings.POSTGRES_CONNECTION_STRING, connectionTimeoutMillis: 5000, query_timeout: 10000 });
+  if (!agenda) {
+    agenda = new Agenda({ backend: new PostgresBackend({ pool: taskPool }) });
+    agenda.on("error", (error) => console.warn(`[scheduler] ${error.message}`));
+  }
   return agenda;
 }
 
@@ -30,7 +33,6 @@ export async function startScheduler(dispatch: JobDispatcher): Promise<void> {
   if (started) return;
   const scheduler = getScheduler();
   defineJobs(scheduler, dispatch);
-  scheduler.on("error", (err) => console.warn(`[scheduler] ${err.message}`));
   await scheduler.start();
   started = true;
 }
@@ -43,6 +45,7 @@ export async function closeScheduler(): Promise<void> {
     // Let handlers finish recording results before disconnecting their backend.
     if (started) await agenda.drain();
     else await agenda.stop();
+    await taskPool?.end(); taskPool = null;
     agenda = null;
     started = false;
   }
@@ -94,6 +97,7 @@ export async function listTasks() {
   return jobs.map((job) => ({
     id: String(job._id),
     prompt: (job.data as AgentTaskData).prompt,
+    threadId: (job.data as AgentTaskData).threadId ?? null,
     nextRunAt: job.nextRunAt,
     repeatInterval: job.repeatInterval ?? null,
     state: job.state,
@@ -107,5 +111,13 @@ export async function listTasks() {
  * @returns Whether a job was removed.
  */
 export async function cancelTask(id: string): Promise<boolean> {
-  return (await getScheduler().cancel({ id })) > 0;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return false;
+  await getScheduler().ready;
+  return cancelUnlockedTask(taskPool!, id);
+}
+
+
+export async function listTaskPage(limit: number, before?: string) {
+  await getScheduler().ready;
+  return taskPage(taskPool!, limit, before);
 }

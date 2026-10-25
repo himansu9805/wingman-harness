@@ -7,3 +7,5 @@ variables:
     value: ""
   - secret: true
     name: token
+  - name: taskId
+    value: ""

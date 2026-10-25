@@ -13,6 +13,7 @@ let ready: Promise<void> | null = null;
 async function getPool(): Promise<pg.Pool> {
   pool ??= new pg.Pool({
     connectionString: settings.POSTGRES_CONNECTION_STRING,
+    connectionTimeoutMillis: 5000, query_timeout: 10000,
   });
   ready ??= pool
     .query(
@@ -28,7 +29,8 @@ async function getPool(): Promise<pg.Pool> {
        finished_at TIMESTAMPTZ NOT NULL
      );
      CREATE INDEX IF NOT EXISTS task_runs_job_id_idx
-       ON task_runs (job_id, started_at DESC);`,
+       ON task_runs (job_id, started_at DESC);
+     CREATE INDEX IF NOT EXISTS task_runs_job_page_idx ON task_runs (job_id, id DESC);`,
     )
     .then(() => {});
   return ready.then(() => pool!);
@@ -81,4 +83,21 @@ export async function closeResults(): Promise<void> {
   await pool?.end();
   pool = null;
   ready = null;
+}
+
+
+/** Bounded execution history remains readable after the schedule is cancelled. */
+export async function getTaskRunPage(limit: number, jobId?: string, before?: string) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RangeError("Invalid run page limit");
+  const db = await getPool();
+  const { rows } = await db.query(`SELECT id::text, job_id, left(prompt,20000) AS prompt, thread_id, status,
+    left(output,16000) AS output, left(error,2000) AS error,
+    (length(output)>16000 OR length(error)>2000) IS TRUE AS truncated, started_at, finished_at
+    FROM task_runs WHERE ($1::text IS NULL OR job_id=$1) AND ($2::bigint IS NULL OR id<$2::bigint)
+    ORDER BY id DESC LIMIT $3`, [jobId ?? null, before ?? null, limit + 1]);
+  const items = rows.slice(0, limit).map(row => ({ id: row.id as string, jobId: row.job_id as string,
+    prompt: row.prompt as string, threadId: row.thread_id as string, status: row.status as TaskRun["status"],
+    output: row.output as string | null, error: row.error as string | null, truncated: row.truncated as boolean,
+    startedAt: row.started_at.toISOString() as string, finishedAt: row.finished_at.toISOString() as string }));
+  return { items, nextBefore: rows.length > limit ? items.at(-1)!.id : null };
 }
