@@ -1,3 +1,4 @@
+import { TaskBusyError } from "../scheduler/management";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import {
@@ -88,14 +89,16 @@ const listScheduledTasks = tool(
 );
 
 const cancelScheduledTask = tool(
-  async ({ id }) =>
-    (await cancelTask(id))
-      ? `Cancelled task ${id}.`
-      : `No task found with ID ${id}. Call list_scheduled_tasks to see the current IDs.`,
+  async ({ id }) => {
+    try {
+      return (await cancelTask(id)) ? `Cancelled task ${id}.`
+        : `No task found with ID ${id}. Call list_scheduled_tasks to see the current IDs.`;
+    } catch (error) { if (error instanceof TaskBusyError) return error.message; throw error; }
+  },
   {
     name: "cancel_scheduled_task",
     description:
-      "Cancels a scheduled task so it never runs again. Needs the task's ID: " +
+      "Cancels future scheduling of an unlocked task. Running or locked tasks must finish before cancellation. Needs the task's ID: " +
       "call list_scheduled_tasks first if you don't have it. If several " +
       "tasks could match what the user means, ask which one.",
     schema: z.object({

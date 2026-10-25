@@ -1,3 +1,4 @@
+import { TasksController } from "./tasks/tasks.controller";
 import { TurnRunner } from "./agent/turn-runner.service";
 import { THREAD_EVENTS, PostgresThreadEventsRepository } from "./threads/thread-events.repository";
 import { Module } from "@nestjs/common";
@@ -8,7 +9,7 @@ import { AGENT_RUNTIME, agentRuntime } from "./agent/agent.runtime";
 import { THREAD_REPOSITORY, PostgresThreadRepository } from "./threads/thread.repository";
 
 @Module({
-  controllers: [ThreadsController],
+  controllers: [ThreadsController, TasksController],
   providers: [
     AgentService,
     TurnRunner,

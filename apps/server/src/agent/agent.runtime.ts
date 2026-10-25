@@ -5,6 +5,10 @@ export const AGENT_RUNTIME = Symbol("AGENT_RUNTIME");
 /** Supplies the agent lifecycle independently of the HTTP handlers. */
 export interface AgentRuntime {
   create(): Promise<Agent>;
+  schedulerEnabled(): Promise<boolean>;
+  listTasks(limit: number, before?: string): Promise<Awaited<ReturnType<typeof import("@wingman/core/tasks").listTaskPage>>>;
+  cancelTask(id: string): Promise<boolean>;
+  taskRuns(limit: number, jobId?: string, before?: string): Promise<Awaited<ReturnType<typeof import("@wingman/core/tasks").getTaskRunPage>>>;
   close(): Promise<void>;
   startScheduler(dispatch: JobDispatcher): Promise<void>;
   stopScheduler(): Promise<void>;
@@ -12,6 +16,10 @@ export interface AgentRuntime {
 }
 
 export const agentRuntime: AgentRuntime = {
+  async schedulerEnabled() { return (await import("@wingman/core")).settings.SCHEDULER_ENABLED; },
+  async listTasks(limit, before) { return (await import("@wingman/core/tasks")).listTaskPage(limit, before); },
+  async cancelTask(id) { return (await import("@wingman/core/tasks")).cancelTask(id); },
+  async taskRuns(limit, jobId, before) { return (await import("@wingman/core/tasks")).getTaskRunPage(limit, jobId, before); },
   async create() {
     const { Agent } = await import("@wingman/core");
     return Agent.create();
