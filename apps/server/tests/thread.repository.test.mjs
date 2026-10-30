@@ -17,7 +17,7 @@ test('create/get return independent records and duplicate creation preserves dat
   assert.equal(typeof THREAD_REPOSITORY, 'symbol');
   assert.equal(await repo.get('missing'), null);
   const created = await repo.create('a');
-  assert.deepEqual(created, { id: 'a', title: 'New conversation',
+  assert.deepEqual(created, { id: 'a', source: 'chat', scheduled: null, title: 'New conversation',
     createdAt: '2026-01-01T00:00:00.123Z', updatedAt: '2026-01-01T00:00:00.123Z', deleting: false });
   created.title = 'mutated';
   const fetched = await repo.get('a');
@@ -102,4 +102,17 @@ test('close is idempotent and prevents reuse; Postgres validates configuration w
   const postgres = new PostgresThreadRepository('postgresql://unused:unused@localhost/unused');
   await Promise.all([postgres.close(), postgres.close()]);
   await assert.rejects(postgres.get('a'), /closed/);
+});
+
+
+test('scheduled provenance survives listing and is copied independently', async () => {
+  const { repo } = fixture();
+  const metadata = { taskId: 'task', taskRunId: 'execution', originThreadId: 'origin' };
+  await repo.create('result', metadata);
+  metadata.taskId = 'mutated';
+  const row = await repo.get('result');
+  assert.equal(row.source, 'scheduled');
+  assert.equal(row.scheduled.taskId, 'task');
+  row.scheduled.taskId = 'changed';
+  assert.equal((await repo.list({ limit: 10 })).items[0].scheduled.taskId, 'task');
 });

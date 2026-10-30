@@ -86,8 +86,8 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     const page = await this.threads.list({ limit, cursor: position });
     const last = page.items.at(-1);
     return {
-      threads: page.items.map(({ id, title, createdAt, updatedAt }) => ({
-        id, title, createdAt, updatedAt,
+      threads: page.items.map(({ id, title, createdAt, updatedAt, source, scheduled }) => ({
+        id, title, createdAt, updatedAt, source, scheduled,
       })),
       nextCursor: page.hasMore && last
         ? encodeCursor({ id: last.id, updatedAt: last.updatedAt })
@@ -196,19 +196,17 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
 
   /** Keep Agenda's lock until execution settles; never consume an existing approval. */
   async dispatchScheduled(event: ScheduledEvent): Promise<void | { retryAt: Date }> {
-    const threadId = event.standalone ? randomUUID() : event.threadId;
+    const threadId = randomUUID();
     const startedAt = new Date();
     let result: TurnResult | undefined;
     let acceptedRun = false;
     try {
       const accepted = await this.runner.accept(threadId, async () => {
-        if (event.standalone) await this.threads.create(threadId);
-        await this.requireThread(threadId);
-        if ((await getPendingApprovals(this.agent, threadId)).length) {
-          throw new ConflictException("Thread is waiting for approval");
-        }
-        await this.threads.touch(threadId, event.prompt);
+        if (!event.standalone) await this.requireThread(event.threadId);
         return async (runId, signal) => {
+          await this.threads.create(threadId, { taskId: event.jobId, taskRunId: runId,
+            originThreadId: event.standalone ? null : event.threadId });
+          await this.threads.touch(threadId, event.prompt);
           await this.events.append(threadId, runId, { type: "scheduled", jobId: event.jobId, prompt: event.prompt });
           result = await this.execute(threadId, runId, signal, options => startTurn(this.agent,
             `This task was scheduled earlier and is due now: ${event.prompt}\nCarry it out now. Your reply is the result delivered to the user. Do not schedule it again. Commands requiring approval must wait for the user's decision.`, threadId, options), "scheduled");
