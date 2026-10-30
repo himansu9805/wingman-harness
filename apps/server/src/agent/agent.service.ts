@@ -196,16 +196,21 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
 
   /** Keep Agenda's lock until execution settles; never consume an existing approval. */
   async dispatchScheduled(event: ScheduledEvent): Promise<void | { retryAt: Date }> {
-    const threadId = randomUUID();
+    const threadId = event.standalone ? randomUUID() : event.threadId;
     const startedAt = new Date();
     let result: TurnResult | undefined;
     let acceptedRun = false;
     try {
       const accepted = await this.runner.accept(threadId, async () => {
-        if (!event.standalone) await this.requireThread(event.threadId);
+        if (!event.standalone) {
+          await this.requireThread(threadId);
+          if ((await getPendingApprovals(this.agent, threadId)).length) {
+            throw new ConflictException("Thread is waiting for approval");
+          }
+        }
         return async (runId, signal) => {
-          await this.threads.create(threadId, { taskId: event.jobId, taskRunId: runId,
-            originThreadId: event.standalone ? null : event.threadId });
+          if (event.standalone) await this.threads.create(threadId, { taskId: event.jobId, taskRunId: runId,
+            originThreadId: null });
           await this.threads.touch(threadId, event.prompt);
           await this.events.append(threadId, runId, { type: "scheduled", jobId: event.jobId, prompt: event.prompt });
           result = await this.execute(threadId, runId, signal, options => startTurn(this.agent,
