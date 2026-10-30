@@ -38,3 +38,12 @@ export async function cancelUnlockedTask(db: Pool, id: string): Promise<boolean>
   if (existing.rowCount) throw new TaskBusyError();
   return false;
 }
+
+/** One bounded lookup for a page of conversation IDs, regardless of task count. */
+export async function taskThreadIds(db: Pool, threadIds: string[]): Promise<string[]> {
+  if (!threadIds.length) return [];
+  const { rows } = await db.query<{ thread_id: string }>(`
+    SELECT DISTINCT data->>'threadId' AS thread_id FROM agenda_jobs
+    WHERE name = 'agent-task' AND data->>'threadId' = ANY($1::text[])`, [threadIds]);
+  return rows.map(row => row.thread_id);
+}

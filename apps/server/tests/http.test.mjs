@@ -74,7 +74,7 @@ async function server(t, agent, options = {}) {
     controllers: [ThreadsController],
     providers: [AgentService, TurnRunner, { provide: THREAD_EVENTS, useValue: journal }, { provide: THREAD_REPOSITORY, useValue: store }, {
       provide: AGENT_RUNTIME,
-      useValue: { create: async () => agent, close: async () => { closed++; }, startScheduler: async () => {}, stopScheduler: async () => {}, recordRun: async () => {}, ...options.runtime },
+      useValue: { scheduledThreadIds: async () => [], create: async () => agent, close: async () => { closed++; }, startScheduler: async () => {}, stopScheduler: async () => {}, recordRun: async () => {}, ...options.runtime },
     }],
   })(HttpTestModule);
   app = await NestFactory.create(HttpTestModule, { logger: false });
@@ -809,4 +809,17 @@ test('run metadata exposes in-progress, missing usage and failed runs without fa
   assert.equal(failed.usage.availability, 'unavailable');
   assert.equal(failed.usage.totalTokens, null);
   assert.equal(failed.usage.missingCalls, 1);
+});
+
+
+test('thread catalogue exposes task ownership as a boolean in one lookup per page', { timeout: TIMEOUT }, async t => {
+  const lookups = [];
+  const api = await server(t, fakeAgent(async function* () { yield doneUpdate(); }), { runtime: {
+    scheduledThreadIds: async ids => { lookups.push(ids); return ['fresh']; },
+  } });
+  const page = await api.json('');
+  assert.equal(page.threads.find(thread => thread.id === 'fresh').hasScheduledTasks, true);
+  assert.equal(page.threads.find(thread => thread.id === 'empty').hasScheduledTasks, false);
+  assert.equal(lookups.length, 1);
+  assert.deepEqual(lookups[0], page.threads.map(thread => thread.id));
 });

@@ -84,10 +84,12 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
   async list(limit: number, cursor?: string) {
     const position = cursor ? decodeCursor(ListCursor, cursor) : undefined;
     const page = await this.threads.list({ limit, cursor: position });
+    const scheduledIds = new Set(await this.runtime.scheduledThreadIds(page.items.map(thread => thread.id)));
     const last = page.items.at(-1);
     return {
       threads: page.items.map(({ id, title, createdAt, updatedAt, source, scheduled }) => ({
         id, title, createdAt, updatedAt, source, scheduled,
+        hasScheduledTasks: scheduledIds.has(id) || source === "scheduled",
       })),
       nextCursor: page.hasMore && last
         ? encodeCursor({ id: last.id, updatedAt: last.updatedAt })

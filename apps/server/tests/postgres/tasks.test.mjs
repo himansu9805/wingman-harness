@@ -36,6 +36,8 @@ test('task management uses Agenda persistence, refuses locked deletion and prese
   const all = [...page.items, ...rest.items];
   assert.equal(all.find(item => item.prompt === 'first').threadId, 'origin');
   assert.equal(all.find(item => item.prompt === 'standalone').threadId, null);
+  assert.deepEqual(await core.getScheduledThreadIds(['origin', 'unrelated']), ['origin']);
+  assert.deepEqual(await core.getScheduledThreadIds([]), []);
   const id = String(first.attrs._id);
   await db.query('UPDATE agenda_jobs SET locked_at=NOW() WHERE id=$1', [id]);
   await assert.rejects(core.cancelTask(id), /locked or running/);
@@ -43,7 +45,8 @@ test('task management uses Agenda persistence, refuses locked deletion and prese
   await db.query('UPDATE agenda_jobs SET locked_at=NULL WHERE id=$1', [id]);
   await core.recordRun({ jobId: id, prompt: 'first', threadId: 'delivered', status: 'success', output: 'x'.repeat(17000), startedAt: new Date(), finishedAt: new Date() });
   await core.recordRun({ jobId: id, prompt: 'first', threadId: 'delivered', status: 'failed', error: 'test failure', startedAt: new Date(), finishedAt: new Date() });
-  assert.equal(await core.cancelTask(id), true); assert.equal(await core.cancelTask(id), false);
+  assert.equal(await core.cancelTask(id), true);
+  assert.deepEqual(await core.getScheduledThreadIds(['origin']), []); assert.equal(await core.cancelTask(id), false);
   assert.equal(await core.cancelTask(String(foreign.attrs._id)), false);
   const runs = await core.getTaskRunPage(1, id); assert.equal(runs.items[0].status, 'failed');
   const older = await core.getTaskRunPage(1, id, runs.nextBefore);

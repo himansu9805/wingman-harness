@@ -1,5 +1,5 @@
 import pg from "pg";
-import { taskPage, cancelUnlockedTask } from "./management";
+import { taskThreadIds, taskPage, cancelUnlockedTask } from "./management";
 import { Agenda } from "agenda";
 import { PostgresBackend } from "@agendajs/postgres-backend";
 import { settings } from "../settings";
@@ -120,4 +120,10 @@ export async function cancelTask(id: string): Promise<boolean> {
 export async function listTaskPage(limit: number, before?: string) {
   await getScheduler().ready;
   return taskPage(taskPool!, limit, before);
+}
+
+export async function getScheduledThreadIds(threadIds: string[]): Promise<string[]> {
+  if (!threadIds.length) return [];
+  await getScheduler().ready;
+  return taskThreadIds(taskPool!, threadIds);
 }
