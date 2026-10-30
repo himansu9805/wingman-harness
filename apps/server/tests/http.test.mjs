@@ -695,7 +695,7 @@ test('shutdown aborts background work and closes idle event subscriptions', { ti
   while (!(await reader.read()).done) { /* Drain already-buffered metadata before EOF. */ }
 });
 
-test('server scheduler delivers results and approvals in a linked result conversation', { timeout: TIMEOUT }, async t => {
+test('server scheduler delivers results and approvals on the originating thread', { timeout: TIMEOUT }, async t => {
   const fixture = createApprovalAgent();
   const runs = []; let dispatch; let stopped = false;
   const api = await server(t, fixture.agent, { runtime: {
@@ -704,46 +704,44 @@ test('server scheduler delivers results and approvals in a linked result convers
     recordRun: async run => { runs.push(run); },
   } });
   await dispatch({ jobId: 'job', prompt: 'run test', threadId: 'fresh' });
-  const resultId = runs[0].threadId;
-  assert.notEqual(resultId, 'fresh');
-  const rows = await api.journal.listAfter(resultId, '0', 100);
+  const rows = await api.journal.listAfter('fresh', '0', 100);
   assert.equal(rows[0].payload.type, 'scheduled');
   assert.equal(rows.at(-1).payload.type, 'approval');
   assert.equal(runs[0].status, 'paused');
-  const metadata = (await api.json(`${resultId}/runs`)).runs[0];
-  const resultThread = await api.store.get(resultId);
-  assert.equal(resultThread.source, 'scheduled');
-  assert.deepEqual(resultThread.scheduled, { taskId: 'job', taskRunId: metadata.runId, originThreadId: 'fresh' });
+  assert.equal(runs[0].threadId, 'fresh');
   assert.equal((await api.store.get('fresh')).source, 'chat');
-  const catalogue = await api.json('');
-  assert.ok(catalogue.threads.some(thread => thread.id === resultId && thread.source === 'scheduled'));
-  const pending = await api.json(`${resultId}/pending`);
-  terminal(await api.stream(`${resultId}/resume`, { answers: { [pending[0].id]: true } }), 'done');
+  const scheduledMetadata = (await api.json('fresh/runs')).runs[0];
+  assert.equal(scheduledMetadata.origin, 'scheduled');
+  assert.equal(scheduledMetadata.status, 'paused');
+  assert.deepEqual(fixture.executions, []);
+  const pending = await api.json('fresh/pending');
+  const retry = await dispatch({ jobId: 'job2', prompt: 'hello', threadId: 'fresh' });
+  assert.ok(retry.retryAt > new Date());
+  assert.deepEqual(await api.json('fresh/pending'), pending);
+  terminal(await api.stream('fresh/resume', { answers: { [pending[0].id]: true } }), 'done');
   assert.deepEqual(fixture.executions, ['test-1']);
-  await dispatch({ jobId: 'job', prompt: 'run test', threadId: 'fresh' });
-  const nextResult = runs.at(-1).threadId;
-  assert.notEqual(nextResult, resultId);
-  assert.notEqual((await api.store.get(nextResult)).scheduled.taskRunId, resultThread.scheduled.taskRunId);
-  assert.equal((await api.store.get(nextResult)).scheduled.taskId, 'job');
+  await dispatch({ jobId: 'job3', prompt: 'hello', threadId: 'fresh' });
+  assert.equal(runs.at(-1).status, 'success');
+  assert.equal(runs.at(-1).threadId, 'fresh');
   await api.close(); assert.equal(stopped, true);
 });
 
-test('scheduled turns keep results independent and never recreate deleted origin threads', { timeout: TIMEOUT }, async t => {
+test('scheduled turns defer while busy, never recreate deleted bound threads, and catalogue standalone results', { timeout: TIMEOUT }, async t => {
   const release = deferred(); t.after(() => release.resolve());
   const entered = deferred(); const runs = [];
   const api = await server(t, fakeAgent(async function* () { entered.resolve(); await bounded(release.promise); yield doneUpdate(); }), { runtime: { recordRun: async run => runs.push(run) } });
   await api.json('busy/messages', { body: { message: 'hello' } }, 202);
   await bounded(entered.promise);
+  assert.ok((await api.service.dispatchScheduled({ jobId: 'busy-job', prompt: 'hello', threadId: 'busy' })).retryAt);
   release.resolve();
-  await api.service.dispatchScheduled({ jobId: 'busy-job', prompt: 'hello', threadId: 'busy' });
-  assert.notEqual(runs.at(-1).threadId, 'busy');
   await assert.rejects(api.service.dispatchScheduled({ jobId: 'missing-job', prompt: 'hello', threadId: 'deleted' }), e => e.status === 404);
   assert.equal(await api.store.get('deleted'), null);
   assert.equal(runs.at(-1).status, 'failed');
   await api.service.dispatchScheduled({ jobId: 'legacy-job', prompt: 'hello', threadId: 'scheduled-legacy-job', standalone: true });
   const standalone = runs.at(-1);
   assert.equal(standalone.status, 'success');
-  assert.ok(await api.store.get(standalone.threadId));
+  assert.equal((await api.store.get(standalone.threadId)).source, 'scheduled');
+  assert.equal((await api.store.get(standalone.threadId)).scheduled.taskId, 'legacy-job');
   assert.equal((await api.journal.listAfter(standalone.threadId, '0', 100))[0].payload.type, 'scheduled');
 });
 
