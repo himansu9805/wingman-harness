@@ -42,11 +42,17 @@ test('Postgres preserves catalogue, history and pending approvals across reconne
     return { repository, saver, ...createApprovalAgent({ checkpointer: saver }), close: resource.close };
   };
 
+  // Exercise migration from the existing catalogue schema as well as fresh data.
+  await admin.query(`CREATE TABLE "${schema}".threads (
+    id TEXT PRIMARY KEY, title TEXT, created_at TIMESTAMPTZ(3) NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT NOW(), deleting BOOLEAN NOT NULL DEFAULT false
+  )`);
   const first = await open();
   const id = randomUUID();
   const keeper = randomUUID();
   await first.repository.create(id);
-  await first.repository.create(keeper);
+  const provenance = { taskId: randomUUID(), taskRunId: randomUUID(), originThreadId: id };
+  await first.repository.create(keeper, provenance);
   await startTurn(first.agent, 'keeper conversation', keeper, options());
   await first.repository.touch(id, '  run a harmless action  ');
   await first.repository.touch(id, 'must not replace title');
@@ -61,6 +67,8 @@ test('Postgres preserves catalogue, history and pending approvals across reconne
 
   const second = await open();
   assert.deepEqual(await second.repository.get(id), before);
+  assert.equal((await second.repository.get(keeper)).source, 'scheduled');
+  assert.deepEqual((await second.repository.get(keeper)).scheduled, provenance);
   assert.deepEqual(await getPendingApprovals(second.agent, id), pending);
   assert.equal((await getThreadMessages(second.agent, id)).messages[0].text, 'run test');
   await resumeTurn(second.agent, { [pending[0].id]: true }, id, options());

@@ -2,7 +2,15 @@ import type { Pool } from "pg";
 
 export const THREAD_REPOSITORY = Symbol("THREAD_REPOSITORY");
 
+export interface ScheduledThread {
+  taskId: string;
+  taskRunId: string;
+  originThreadId: string | null;
+}
+
 export interface ThreadRecord {
+  source: "chat" | "scheduled";
+  scheduled: ScheduledThread | null;
   id: string;
   title: string;
   createdAt: string;
@@ -15,7 +23,7 @@ type ThreadPage = { items: ThreadRecord[]; hasMore: boolean };
 
 export interface ThreadRepository {
   init(): Promise<void>;
-  create(id: string): Promise<ThreadRecord>;
+  create(id: string, scheduled?: ScheduledThread): Promise<ThreadRecord>;
   get(id: string): Promise<ThreadRecord | null>;
   list(options: ListOptions): Promise<ThreadPage>;
   touch(id: string, message?: string): Promise<void>;
@@ -35,11 +43,12 @@ function checkLimit(limit: number): void {
 }
 
 type ThreadRow = {
-  id: string; title: string | null; created_at: Date; updated_at: Date; deleting: boolean;
+  id: string; title: string | null; created_at: Date; updated_at: Date; deleting: boolean; scheduled: ScheduledThread | null;
 };
 
 function record(row: ThreadRow): ThreadRecord {
   return {
+    source: row.scheduled ? "scheduled" : "chat", scheduled: row.scheduled ?? null,
     id: row.id, title: row.title ?? "New conversation",
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
     deleting: row.deleting,
@@ -72,6 +81,7 @@ export class PostgresThreadRepository implements ThreadRepository {
         updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT NOW(),
         deleting BOOLEAN NOT NULL DEFAULT false
       )`);
+      await pool.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS scheduled JSONB`);
       await pool.query(`CREATE INDEX IF NOT EXISTS threads_updated_idx
         ON threads (updated_at DESC, id COLLATE "C" DESC) WHERE deleting = false`);
     } catch (error) {
@@ -80,10 +90,10 @@ export class PostgresThreadRepository implements ThreadRepository {
     }
   }
 
-  async create(id: string): Promise<ThreadRecord> {
+  async create(id: string, scheduled?: ScheduledThread): Promise<ThreadRecord> {
     const pool = await this.pool();
     const result = await pool.query<ThreadRow>(
-      `INSERT INTO threads (id) VALUES ($1) RETURNING *`, [id],
+      `INSERT INTO threads (id, scheduled) VALUES ($1, $2::jsonb) RETURNING *`, [id, scheduled ? JSON.stringify(scheduled) : null],
     );
     return record(result.rows[0]);
   }
@@ -140,16 +150,16 @@ export class MemoryThreadRepository implements ThreadRepository {
   }
 
   private copy(row: Omit<ThreadRecord, "title"> & { title: string | null }): ThreadRecord {
-    return { ...row, title: row.title ?? "New conversation" };
+    return { ...row, scheduled: row.scheduled ? { ...row.scheduled } : null, title: row.title ?? "New conversation" };
   }
 
   async init(): Promise<void> { this.assertOpen(); }
 
-  async create(id: string): Promise<ThreadRecord> {
+  async create(id: string, scheduled?: ScheduledThread): Promise<ThreadRecord> {
     this.assertOpen();
     if (this.rows.has(id)) throw new Error(`Thread already exists: ${id}`);
     const now = this.clock().toISOString();
-    const row = { id, title: null, createdAt: now, updatedAt: now, deleting: false };
+    const row = { source: scheduled ? "scheduled" as const : "chat" as const, scheduled: scheduled ? { ...scheduled } : null, id, title: null, createdAt: now, updatedAt: now, deleting: false };
     this.rows.set(id, row);
     return this.copy(row);
   }
