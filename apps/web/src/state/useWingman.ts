@@ -18,6 +18,7 @@ export function useWingman(connection: Connection | null) {
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
+  const selectedId = useRef(threadId); selectedId.current = threadId;
   const lifecycle = useRef(new AbortController());
   const threadLifecycle = useRef(new AbortController());
   const seenRuns = useRef(new Set<string>());
@@ -27,6 +28,8 @@ export function useWingman(connection: Connection | null) {
   const optimistic = useRef<{ message: Message; previousIds: Set<string> } | null>(null);
 
   const select = useCallback((id: string | null) => {
+    if (selectedId.current === id) return;
+    selectedId.current = id;
     threadLifecycle.current.abort(); // Reject stale writes immediately, before React runs the next effect.
     setThreadId(id); saveThread(id); setError('');
   }, []);
@@ -89,8 +92,8 @@ export function useWingman(connection: Connection | null) {
         } while (again && !signal.aborted);
       } catch (e) {
         if (!signal.aborted) {
-          setError(explain(e));
           if (e instanceof ApiError && e.status === 404) select(null);
+          setError(explain(e));
         }
       } finally { refreshing = false; if (!signal.aborted) setLoading(false); }
     };
@@ -99,7 +102,7 @@ export function useWingman(connection: Connection | null) {
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     void watchEvents({ connection: api.connection, threadId, signal,
       onStatus: status => { if (!signal.aborted) setStream(status); },
-      onError: e => { if (!signal.aborted) { setError(explain(e)); if (e instanceof ApiError && e.status === 404) select(null); } },
+      onError: e => { if (!signal.aborted) { if (e instanceof ApiError && e.status === 404) select(null); setError(explain(e)); } },
       onEvent: event => {
         if (signal.aborted) return;
         seenRuns.current.add(event.runId);

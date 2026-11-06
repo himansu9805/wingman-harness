@@ -7,6 +7,7 @@ import serviceModule from '../../../server/dist/agent/agent.service.js';
 import runtimeModule from '../../../server/dist/agent/agent.runtime.js';
 import runnerModule from '../../../server/dist/agent/turn-runner.service.js';
 import controllerModule from '../../../server/dist/threads/threads.controller.js';
+import tasksControllerModule from '../../../server/dist/tasks/tasks.controller.js';
 import guardModule from '../../../server/dist/auth/token.guard.js';
 import repositoryModule from '../../../server/dist/threads/thread.repository.js';
 import eventsModule from '../../../server/dist/threads/thread-events.repository.js';
@@ -53,12 +54,31 @@ agent.app.stream = async (input, options) => {
     yield* await originalStream(input, options);
   })();
 };
+const taskIds = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'];
+await store.create('demo-schedule-origin');
+await store.touch('demo-schedule-origin', 'Daily workspace checks');
+await store.create('demo-schedule-results');
+await store.touch('demo-schedule-results', 'Scheduled workspace check');
+await agent.app.invoke({ messages: [new HumanMessage('Demo scheduled task completed successfully.')] }, { configurable: { thread_id: 'demo-schedule-results' } });
+const demoTasks = new Map([
+  [taskIds[0], { id: taskIds[0], prompt: 'Check workspace health every morning', threadId: 'demo-schedule-origin', nextRunAt: new Date(Date.now() + 3600000).toISOString(), repeatInterval: '0 9 * * *', state: 'repeating' }],
+  [taskIds[1], { id: taskIds[1], prompt: 'Generate a project status summary', threadId: null, nextRunAt: null, repeatInterval: null, state: 'running' }],
+]);
+const demoRuns = [
+  { id: '2', jobId: taskIds[1], prompt: 'Generate a project status summary', threadId: 'demo-schedule-results', status: 'failed', output: null, error: 'Demo upstream service unavailable', truncated: false, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() },
+  { id: '1', jobId: taskIds[0], prompt: 'Check workspace health every morning', threadId: 'demo-schedule-origin', status: 'success', output: 'Workspace checks passed. No pending actions.', error: null, truncated: false, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() },
+];
 class BrowserTestModule {}
-Module({ controllers: [controllerModule.ThreadsController], providers: [
+Module({ controllers: [controllerModule.ThreadsController, tasksControllerModule.TasksController], providers: [
   serviceModule.AgentService, runnerModule.TurnRunner,
   { provide: repositoryModule.THREAD_REPOSITORY, useValue: store },
   { provide: eventsModule.THREAD_EVENTS, useValue: journal },
-  { provide: runtimeModule.AGENT_RUNTIME, useValue: { create: async () => agent, close: async () => {}, startScheduler: async () => {}, stopScheduler: async () => {}, recordRun: async () => {} } },
+  { provide: runtimeModule.AGENT_RUNTIME, useValue: { schedulerEnabled: async () => true,
+    scheduledThreadIds: async ids => ids.filter(id => [...demoTasks.values()].some(task => task.threadId === id)),
+    listTasks: async () => ({ items: [...demoTasks.values()], nextBefore: null }),
+    cancelTask: async id => { if (demoTasks.get(id)?.state === 'running') { const error = new Error('Task is running'); error.name = 'TaskBusyError'; throw error; } return demoTasks.delete(id); },
+    taskRuns: async (_limit, jobId) => ({ items: demoRuns.filter(run => !jobId || run.jobId === jobId), nextBefore: null }),
+    create: async () => agent, close: async () => {}, startScheduler: async () => {}, stopScheduler: async () => {}, recordRun: async () => {} } },
 ] })(BrowserTestModule);
 const app = await NestFactory.create(BrowserTestModule, { logger: false });
 app.enableCors({ origin: 'http://127.0.0.1:5173', allowedHeaders: ['Authorization', 'Content-Type', 'Last-Event-ID'] });

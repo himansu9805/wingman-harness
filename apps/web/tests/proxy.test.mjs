@@ -21,6 +21,11 @@ test('private proxy rejects foreign origins and unrelated backend paths', () => 
   const config = backendConfig({ WINGMAN_API_TOKEN: 'test' });
   assert.equal(checkGuard(config, '/api/threads', { host: '127.0.0.1:5173', origin: 'http://other.invalid' }).status, 403);
   assert.equal(checkGuard(config, '/api/threads', { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173' }).next, true);
+  assert.equal(checkGuard(config, '/api/tasks').next, true);
+  assert.equal(checkGuard(config, '/api/tasks/runs?jobId=test').next, true);
+  assert.equal(checkGuard(config, '/api/tasks/test').next, true);
+  assert.equal(checkGuard(config, '/api/tasksevil').status, 404);
+  assert.equal(checkGuard(config, '/api/tasks/../admin').status, 404);
   assert.equal(checkGuard(config, '/api/admin').status, 404);
   assert.equal(checkGuard(config, '/api/threadsevil').status, 404);
   assert.equal(checkGuard(config, '/api/threads/../admin').status, 404);
@@ -55,6 +60,7 @@ test('the shipped web proxy injects auth, preserves event cursors, and streams w
   const address = server.httpServer.address(); const base = `http://127.0.0.1:${address.port}`;
   const list = await fetch(`${base}/api/threads`, { headers: { authorization: 'Bearer client-must-not-override' } });
   assert.equal(list.status, 200); assert.ok(!(await list.text()).includes(token));
+  assert.equal((await fetch(`${base}/api/tasks`)).status, 200);
   const controller = new AbortController();
   const stream = await fetch(`${base}/api/threads/thread/events`, { headers: { 'Last-Event-ID': 'thread:1' }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]) });
   assert.equal(stream.status, 200, 'idle SSE headers arrive before the first event');
@@ -64,8 +70,10 @@ test('the shipped web proxy injects auth, preserves event cursors, and streams w
   controller.abort(); await reader.cancel().catch(() => {});
   assert.deepEqual(requests, [
     { url: '/threads', auth: `Bearer ${token}`, cursor: undefined },
+    { url: '/tasks', auth: `Bearer ${token}`, cursor: undefined },
     { url: '/threads/thread/events', auth: `Bearer ${token}`, cursor: 'thread:1' },
   ]);
+  const beforeRejected = requests.length;
   const rejected = await fetch(`${base}/api/threads`, { headers: { Origin: 'http://other.invalid' } });
-  assert.equal(rejected.status, 403); assert.equal(requests.length, 2);
+  assert.equal(rejected.status, 403); assert.equal(requests.length, beforeRejected);
 });

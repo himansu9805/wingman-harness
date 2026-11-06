@@ -10,8 +10,9 @@ import wingmanLogo from '../../../../assets/branding/wingman-logo.png';
 import type { Wingman } from '../state/useWingman';
 import type { Thread } from '../api/types';
 
-export function ThreadSidebar({ model, onDelete }: {
-  model: Wingman; onDelete: (thread: Thread) => void;
+export function ThreadSidebar({ model, onDelete, scheduled, onScheduled, onNew, onSelect }: {
+  model: Wingman; onDelete: (thread: Thread) => void; scheduled: boolean;
+  onScheduled: () => void; onNew: () => void; onSelect: (id: string) => void;
 }) {
   return (
     <SideNav resizable header={<HStack gap={2} vAlign="center">
@@ -23,8 +24,8 @@ export function ThreadSidebar({ model, onDelete }: {
     </HStack>}
       footer={<VStack gap={2}>
       </VStack>}>
-      <SideNavItem key='new-conversation' label='New conversation' icon={SquarePen} isDisabled={model.working} onClick={() => void model.create()} />
-      <SideNavItem key='scheduled' label='Scheduled' icon={Clock} isDisabled={model.working} onClick={() => void model.create()} />
+      <SideNavItem key='new-conversation' label='New conversation' icon={SquarePen} isDisabled={model.working} onClick={onNew} />
+      <SideNavItem key='scheduled' label='Scheduled' icon={Clock} isSelected={scheduled} onClick={onScheduled} />
       <SideNavSection title="Conversations" endContent={
         <IconButton
           label='Refresh'
@@ -32,12 +33,14 @@ export function ThreadSidebar({ model, onDelete }: {
           icon={<Icon icon={RotateCcw} size='xsm' />}
         />
       }>
-        {model.threads.map(thread => (
-          <SideNavItem key={thread.id} label={thread.title} icon={MessageSquare} isSelected={thread.id === model.threadId}
-            onClick={() => model.select(thread.id)} actions={
+        {model.threads.map(thread => {
+          const hasScheduledTasks = thread.hasScheduledTasks;
+          return (
+          <SideNavItem key={thread.id} label={hasScheduledTasks ? `${thread.title} · Scheduled` : thread.title} icon={hasScheduledTasks ? Clock : MessageSquare} isSelected={!scheduled && thread.id === model.threadId}
+            onClick={() => onSelect(thread.id)} actions={
               <Button label={`Delete ${thread.title}`} icon={<Icon icon={Trash2} />} isIconOnly variant="ghost" isDisabled={model.working} onClick={() => onDelete(thread)} />
             } />
-        ))}
+        ); })}
         {!model.threads.length && <Text type="supporting">Your conversations will appear here.</Text>}
       </SideNavSection>
       {model.catalogueCursor && <Button label="Load more conversations" variant="ghost" onClick={() => void model.refreshThreads(true)} />}

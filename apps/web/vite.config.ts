@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   const backend = backendConfig(env);
   const guard = apiGuard(backend);
   const proxy: Record<string, ProxyOptions> = {
-    '/api/threads': {
+    '^/api/(threads|tasks)(/|\\?|$)': {
       target: backend.url,
       changeOrigin: true,
       rewrite: (path: string) => path.replace(/^\/api/, ''),

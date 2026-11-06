@@ -9,6 +9,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import * as stylex from '@stylexjs/stylex';
 import { ThreadSidebar } from './components/ThreadSidebar';
+import { ScheduledView } from './components/ScheduledView';
 import { Conversation } from './components/Conversation';
 import { useWingman } from './state/useWingman';
 import { removeLegacyConnection } from './state/storage';
@@ -16,28 +17,38 @@ import { defaultConnection } from './api/client';
 import type { Thread } from './api/types';
 
 export default function App() {
+  const [view, setView] = useState<'chat' | 'scheduled'>(() => window.location.hash === '#scheduled' ? 'scheduled' : 'chat');
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (view === 'scheduled') url.hash = 'scheduled';
+    else if (url.hash === '#scheduled') url.hash = '';
+    window.history.replaceState(window.history.state, '', url);
+  }, [view]);
   const [deleting, setDeleting] = useState<Thread | null>(null);
   const model = useWingman(defaultConnection);
   useEffect(removeLegacyConnection, []);
-  const title = model.threads.find(t => t.id === model.threadId)?.title ?? 'New conversation';
+  const selectedThread = model.threads.find(t => t.id === model.threadId);
+  const title = selectedThread?.title ?? (model.threadId ? 'Conversation' : 'New conversation');
   const status = model.threadId && model.stream !== 'live'
     ? ({ connecting: 'Connecting…', reconnecting: 'Reconnecting…', offline: 'Connection unavailable' })[model.stream]
     : null;
   return (
     <>
       <AppShell height="fill" variant="section" contentPadding={0}
-        sideNav={<ThreadSidebar model={model} onDelete={setDeleting} />}>
-        <Layout height="fill" header={<LayoutHeader hasDivider padding={3}>
+        sideNav={<ThreadSidebar model={model} onDelete={setDeleting} scheduled={view === 'scheduled'} onScheduled={() => setView('scheduled')}
+          onNew={() => { setView('chat'); model.create(); }} onSelect={id => { setView('chat'); model.select(id); }} />}>
+        <Layout height="fill" header={view === 'chat' ? <LayoutHeader hasDivider padding={3}>
           <HStack gap={3} vAlign="center">
-            <Text as="h1" weight="medium" maxLines={1} xstyle={styles.title}>{model.threadId ? title : 'New conversation'}</Text>
-            {status && <Text type="supporting" role="status" xstyle={styles.status}>{status}</Text>}
+            <Text as="h1" weight="medium" maxLines={1} xstyle={styles.title}>{title}</Text>
+            {view === 'chat' && selectedThread?.hasScheduledTasks && <Button label="Scheduled · View tasks" variant="ghost" onClick={() => setView('scheduled')} />}
+            {view === 'chat' && status && <Text type="supporting" role="status" xstyle={styles.status}>{status}</Text>}
           </HStack>
-        </LayoutHeader>} content={
-          <LayoutContent padding={0} isScrollable={false}>
+        </LayoutHeader> : undefined} content={
+          <LayoutContent padding={0} isScrollable={view === 'scheduled'}>
             <VStack height="100%" width="100%">
               {model.error && <Banner role="alert" status="error" container="section" title="Request could not be completed" description={model.error}
                 endContent={<Button label="Dismiss" variant="ghost" onClick={() => { model.clearError(); }} />} />}
-              <Conversation model={model} />
+              {view === 'scheduled' ? <ScheduledView onCreateTask={() => { setView('chat'); model.create(); }} openConversation={id => { setView('chat'); model.select(id); }} /> : <Conversation model={model} />}
             </VStack>
           </LayoutContent>
         } />

@@ -26,7 +26,7 @@ function apiFixture() {
     }
     if (endpoint === 'pending') return Response.json(pending.get(id) ?? []);
     if (endpoint === 'messages') return Response.json(history.get(id) ?? { messages: [], nextCursor: null });
-    return Response.json({ threads: [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }], nextCursor: null });
+    return Response.json({ threads: [{ id: 'one', title: 'One', hasScheduledTasks: true }, { id: 'two', title: 'Two', hasScheduledTasks: false, source: 'scheduled', scheduled: { taskId: 'job', taskRunId: 'run', originThreadId: 'one' } }], nextCursor: null });
   };
   const sequences = new Map();
   return { pending, history, calls, setPost: fn => { postGate = fn; },
@@ -163,4 +163,55 @@ test('new conversation stays local until the first message is submitted', async 
   assert.equal(hook.result.current.history.messages[0].text, 'first message');
   assert.equal(fixture.calls.filter(call => call.method === 'POST').length, 2);
   assert.equal(hook.result.current.activity.phase, 'running');
+});
+
+test('opening the already selected conversation preserves its live event subscription', async t => {
+  const original = globalThis.fetch; t.after(() => { cleanup(); globalThis.fetch = original; });
+  localStorage.setItem('wingman.thread', 'one');
+  const fixture = apiFixture(); const hook = renderHook(() => useWingman(connection));
+  await waitFor(() => assert.equal(hook.result.current.stream, 'live'));
+  await act(async () => { hook.result.current.select('one'); });
+  await act(async () => { fixture.emit('one', { type: 'done', runId: 'still-live', text: 'done' }); });
+  assert.equal(hook.result.current.activity.phase, 'done');
+  assert.equal(hook.result.current.stream, 'live');
+});
+
+test('a deleted result conversation reports why it cannot be opened', async t => {
+  const original = globalThis.fetch; t.after(() => { cleanup(); globalThis.fetch = original; });
+  localStorage.setItem('wingman.thread', 'missing');
+  apiFixture(); const fetcher = globalThis.fetch;
+  globalThis.fetch = (url, options) => String(url).includes('/missing/messages')
+    ? Promise.resolve(Response.json({ message: 'Conversation no longer exists' }, { status: 404 })) : fetcher(url, options);
+  const hook = renderHook(() => useWingman(connection));
+  await waitFor(() => assert.equal(hook.result.current.threadId, null));
+  assert.match(hook.result.current.error, /no longer exists/);
+});
+
+
+test('catalogue refresh preserves scheduled result provenance', async t => {
+  const original = globalThis.fetch; t.after(() => { cleanup(); globalThis.fetch = original; });
+  localStorage.removeItem('wingman.thread');
+  apiFixture();
+  const hook = renderHook(() => useWingman(connection));
+  await waitFor(() => assert.equal(hook.result.current.threads.length, 2));
+  assert.deepEqual(hook.result.current.threads.find(thread => thread.id === 'two').scheduled,
+    { taskId: 'job', taskRunId: 'run', originThreadId: 'one' });
+  await act(async () => { await hook.result.current.refreshThreads(); });
+  assert.equal(hook.result.current.threads.find(thread => thread.id === 'two').source, 'scheduled');
+});
+
+
+test('scheduled indicator comes directly from the catalogue without task requests', async t => {
+  const original = globalThis.fetch; t.after(() => { cleanup(); globalThis.fetch = original; });
+  localStorage.removeItem('wingman.thread');
+  apiFixture();
+  const requests = [];
+  const fetchCatalogue = globalThis.fetch;
+  globalThis.fetch = (url, options) => { requests.push(new URL(url).pathname); return fetchCatalogue(url, options); };
+  const hook = renderHook(() => useWingman(connection));
+  await waitFor(() => assert.equal(hook.result.current.threads.length, 2));
+  assert.equal(hook.result.current.threads.find(thread => thread.id === 'one').hasScheduledTasks, true);
+  assert.equal(hook.result.current.threads.find(thread => thread.id === 'two').hasScheduledTasks, false);
+  await act(async () => hook.result.current.refreshThreads());
+  assert.equal(requests.some(path => path.startsWith('/tasks')), false);
 });

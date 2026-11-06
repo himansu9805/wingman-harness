@@ -17,7 +17,8 @@ export function apiGuard(config: ReturnType<typeof backendConfig>) {
       response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       response.end(JSON.stringify({ message }));
     };
-    if (!/^\/api\/threads(?:\/[\w-]{1,64}(?:\/(?:messages|pending|resume|events))?)?\/?$/.test(path.split('?')[0])) { fail(404, 'API route not found.'); return; }
+    const taskPath = /^\/api\/tasks(?:\/(?:runs|[\w-]{1,64}))?\/?$/.test(path.split('?')[0]);
+    if (!taskPath && !/^\/api\/threads(?:\/[\w-]{1,64}(?:\/(?:messages|pending|resume|events))?)?\/?$/.test(path.split('?')[0])) { fail(404, 'API route not found.'); return; }
     const origin = request.headers.origin;
     if (origin) {
       try {

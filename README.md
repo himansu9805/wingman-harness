@@ -118,34 +118,9 @@ To use the web app, keep the API running and start the frontend in another termi
 npm run dev:web
 ```
 
-Open [Wingman](http://127.0.0.1:5173) and send your first message. “New conversation”
-opens a local draft; the thread is created when you submit its first message. The web server
-reads the repository's root `.env` automatically; there is no connection form.
-Set these server-side values there, or override them in `apps/web/.env`:
-
-```bash
-WINGMAN_API_URL=http://127.0.0.1:3000
-WINGMAN_API_TOKEN=<same-token-as-the-backend>
-```
-
-`WINGMAN_API_URL` defaults to the local backend (`PORT`, or 3000). The browser
-calls the same-origin `/api/threads` proxy; the web server adds the API token.
-The token is never stored in the browser or embedded in its JavaScript. An
-[environment template](apps/web/.env.example) is included. Restart the web server
-after changing environment values. Do not prefix the token with `VITE_`, which
-would expose it in browser assets.
-
-Refreshing restores the selected conversation and pending approval cards. Each
-assistant turn groups model selection, tool activity, memory recall, and the
-reply into one aligned block. Tool outputs expand in place. Event subscriptions
-reconnect without resending messages.
-
-The web app uses React, Vite, and Astryx's neutral theme. `npm run build`,
-`npm run typecheck`, and `npm test` include the web workspace. `npm run preview
--w @wingman/web` serves a local build with the same private API proxy. For a
-production deployment, serve the built assets behind a same-origin server proxy
-that injects the token; a plain static file host cannot do that. The bundled web
-servers bind to loopback for local use.
+Open [Wingman](http://127.0.0.1:5173). See the
+[web interface guide](https://github.com/himansu9805/wingman-harness/wiki/Web-Interface)
+for environment setup, approvals, and scheduled tasks.
 
 The full walkthrough, including model choices and Postgres via Docker, is in
 [Getting Started](https://github.com/himansu9805/wingman-harness/wiki/Getting-Started).

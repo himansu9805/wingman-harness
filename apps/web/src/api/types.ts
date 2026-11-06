@@ -1,7 +1,7 @@
 import type { RunMetadata } from './run-metadata';
 
 export interface Connection { url: string }
-export interface Thread { id: string; title: string; createdAt: string; updatedAt: string }
+export interface Thread { hasScheduledTasks: boolean; source?: "chat" | "scheduled"; scheduled?: { taskId: string; taskRunId: string; originThreadId: string | null } | null; id: string; title: string; createdAt: string; updatedAt: string }
 export interface Approval { id: string; command: string }
 export interface ToolCall {
   id: string; name: string; args: Record<string, unknown>;
