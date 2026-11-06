@@ -7,7 +7,7 @@
 <p align="center">
   <strong>A self-hosted AI agent harness for your machine and your models.</strong><br>
   Human-approved shell commands, skills, MCP tools, graph memory and scheduled tasks.<br>
-  Available through an interactive CLI and a streaming HTTP API.
+  Available through a React web app, an interactive CLI, and a streaming HTTP API.
 </p>
 
 <p align="center">
@@ -44,8 +44,8 @@
   graph database and shared across conversations.
 - **Scheduled tasks.** Reminders and recurring jobs, backed by Postgres.
 - **Durable conversations.** Threads and pending approvals survive restarts.
-- **Two ways in.** An interactive CLI, and a NestJS API with replayable
-  thread events delivered as Server-Sent Events.
+- **Three ways in.** A React web app, an interactive CLI, and a NestJS API
+  with replayable thread events delivered as Server-Sent Events.
 
 ## How it works
 
@@ -53,7 +53,7 @@
 flowchart LR
     CLI["apps/cli<br/>terminal chat"] --> Core
     Server["apps/server<br/>NestJS + SSE"] --> Core
-    Web["apps/web<br/>React (planned)"] -.-> Server
+    Web["apps/web<br/>React + Astryx"] --> Server
 
     subgraph Core["packages/core (@wingman/core)"]
         Agent["LangGraph agent<br/>+ model router"]
@@ -111,6 +111,16 @@ npm run dev:cli
 ```bash
 npm run dev:server
 ```
+
+To use the web app, keep the API running and start the frontend in another terminal:
+
+```bash
+npm run dev:web
+```
+
+Open [Wingman](http://127.0.0.1:5173). See the
+[web interface guide](https://github.com/himansu9805/wingman-harness/wiki/Web-Interface)
+for environment setup, approvals, and scheduled tasks.
 
 The full walkthrough, including model choices and Postgres via Docker, is in
 [Getting Started](https://github.com/himansu9805/wingman-harness/wiki/Getting-Started).
