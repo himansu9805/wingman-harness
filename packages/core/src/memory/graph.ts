@@ -160,11 +160,8 @@ export class GraphMemory {
       ([type, names]) => `${type}:\n${names.map((n) => `- ${n}`).join("\n")}`,
     );
     return [
-      "# Memory",
-      "Long-term memory holds facts about the names below. Only the names are",
-      "shown here. To see the facts, call recall_memory with one name copied",
-      "exactly as written (without the leading '- '). Don't guess facts from",
-      "the names alone.",
+      "# Memory index",
+      "Stored entity names grouped by type. Names alone do not establish facts.",
       "",
       ...sections,
     ].join("\n");
@@ -192,6 +189,14 @@ export class GraphMemory {
       }
       await this.upsertRelation(conversationName, "about", entityName);
     }
+  }
+
+  /** Closes existing memory without creating a database during shutdown. */
+  static async closeInstance(): Promise<void> {
+    const instance = GraphMemory.instance;
+    GraphMemory.instance = null;
+
+    await instance?.closeGraph();
   }
 
   /**

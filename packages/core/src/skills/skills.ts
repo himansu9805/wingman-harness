@@ -112,19 +112,12 @@ export function listSkills(): Promise<SkillMeta[]> {
 }
 
 /**
- * Loads the Markdown body for a skill by name.
+ * Loads the Markdown body for a selected skill.
  *
- * @param name The name of the skill to load.
- * @returns The skill's Markdown content without its YAML frontmatter.
- * @throws {Error} If no skill with the specified name is available.
+ * @param skill Metadata selected from the agent's permitted skill catalogue.
+ * @returns The skill's Markdown content without YAML frontmatter.
  */
-export async function loadSkillContent(name: string): Promise<string> {
-  const skills = await listSkills();
-  const skill = skills.find((s) => s.name === name);
-  if (!skill) {
-    const available = skills.map((s) => s.name).join(", ") || "(none)";
-    throw new Error(`No skill named "${name}". Available skills: ${available}`);
-  }
+export async function loadSkillContent(skill: SkillMeta): Promise<string> {
   const raw = await readFile(skill.path, "utf-8");
   const { content } = splitFrontmatter(raw);
   return content.trim();
@@ -133,11 +126,11 @@ export async function loadSkillContent(name: string): Promise<string> {
 /**
  * Renders a concise index of the available skills for inclusion in a prompt.
  *
+ * @param skills Only the skills permitted for the current agent.
  * @returns A Markdown-formatted skill index, or an empty string when no skills
  * are available.
  */
-export async function renderSkillIndex(): Promise<string> {
-  const skills = await listSkills();
+export function renderSkillIndex(skills: readonly SkillMeta[]): string {
   if (skills.length === 0) return "";
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`);
   return [

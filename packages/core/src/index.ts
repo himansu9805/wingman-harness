@@ -3,6 +3,13 @@ export { Agent } from "./core/agent";
 export * from "./core/turn";
 export { startScheduler, closeScheduler } from "./scheduler/scheduler";
 export { recordRun } from "./scheduler/results";
-export type { ScheduledEvent, TaskRun, JobDispatcher } from "./scheduler/interfaces";
+export type {
+  ScheduledEvent,
+  TaskRun,
+  JobDispatcher,
+} from "./scheduler/interfaces";
 export type { CommandApproval } from "./tools/bash";
 export { shutdown } from "./shutdown";
+export { initializeRuntime, type CoreRuntime } from "./core/runtime";
+export type { AgentDefinition } from "./core/agents/definition";
+export type { AgentConfiguration, AgentModels } from "./core/agents/configuration";

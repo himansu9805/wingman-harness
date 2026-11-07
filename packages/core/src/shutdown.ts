@@ -1,23 +1,9 @@
-import { closeResults } from "./scheduler/results";
-import { closeScheduler } from "./scheduler/scheduler";
-import { closeMcpTools } from "./mcp/mcp";
-import { GraphMemory } from "./memory/graph";
-import { closeCheckpointer } from "./core/checkpointer";
-
-let shutdownPromise: Promise<void> | null = null;
+import { closeRuntime } from "./core/runtime";
 
 /**
- * Releases the scheduler, MCP connections, the checkpointer and the memory
- * graph. Safe to call more than once.
+ * Releases shared services after the caller has drained interactive turns.
+ * Safe to call repeatedly; cleanup failures are reported by the shared promise.
  */
 export function shutdown(): Promise<void> {
-  shutdownPromise ??= (async () => {
-    // Scheduler first, so a finishing scheduled turn can still save its state.
-    await closeScheduler();
-    await closeResults();
-    await closeMcpTools();
-    await closeCheckpointer();
-    await GraphMemory.getInstance().closeGraph();
-  })();
-  return shutdownPromise;
+  return closeRuntime();
 }

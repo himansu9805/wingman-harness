@@ -10,6 +10,7 @@ import {
   shutdown,
   runUntilDone,
   declinePending,
+  initializeRuntime,
   type Decide,
   type ScheduledEvent,
   type TurnEvent,
@@ -86,10 +87,11 @@ async function main() {
     `(models: fast ${settings.FAST_MODEL_NAME} · strong ${settings.STRONG_MODEL_NAME})\n`,
   );
 
+  const runtime = await initializeRuntime();
+  const agent = await Agent.create(runtime);
   const rl = readline.createInterface({ input: stdin, output: stdout });
   // Between questions, terminal redraws must not display readline's default "> ".
   rl.setPrompt("");
-  const agent = await Agent.create();
 
   // In a TTY, readline owns Ctrl+C (raw mode), so process-level SIGINT never
   // fires. Ctrl+C cancels the in-flight turn, or exits when at the prompt.
