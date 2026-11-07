@@ -2,10 +2,9 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { GraphMemory } from "../memory/graph";
 
-const graphMemory = GraphMemory.getInstance();
-
 const remember = tool(
   async ({ subject, subject_type, relation, object, object_type, notes }) => {
+    const graphMemory = GraphMemory.getInstance();
     await graphMemory.upsertEntity(subject, subject_type, notes ?? "");
     await graphMemory.upsertEntity(object, object_type, "");
     await graphMemory.upsertRelation(subject, relation, object);
@@ -60,6 +59,7 @@ const remember = tool(
 
 const recallMemory = tool(
   async ({ name }) => {
+    const graphMemory = GraphMemory.getInstance();
     // Small models sometimes copy a label along with the name, e.g.
     // "User (person)"; retry without it before reporting a miss.
     const result =
@@ -92,6 +92,7 @@ const recallMemory = tool(
 
 const logConversation = tool(
   async ({ summary, entities }) => {
+    const graphMemory = GraphMemory.getInstance();
     await graphMemory.recordConversation(summary, entities);
     return `Logged conversation: ${summary}`;
   },

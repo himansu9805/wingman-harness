@@ -5,6 +5,14 @@ import type { CommandApproval } from "../tools/bash";
 import { MEMORY_TOOL_NAMES } from "../tools/names";
 import { modelUsage, type ModelUsage } from "./usage";
 import { previewToolOutput } from "./tool-output";
+import { z } from "zod";
+
+/** Routing state exists only on graphs configured with the router middleware. */
+const routeSchema = z.object({
+  choice: z.string(),
+  confidence: z.number(),
+  probabilities: z.record(z.string(), z.number()).optional(),
+});
 
 
 /** Something visible that happened during a turn. */
@@ -146,14 +154,16 @@ export async function runTurn(
       continue;
     }
 
-    const route =
-      update["TypeSafeModelRouterMiddleware.before_agent"]?.modelRoute;
-    if (route) {
+    const routeUpdate = update["TypeSafeModelRouterMiddleware.before_agent"];
+    const route = routeUpdate && "modelRoute" in routeUpdate
+      ? routeSchema.safeParse(routeUpdate.modelRoute)
+      : undefined;
+    if (route?.success) {
       await onEvent({
         type: "route",
-        choice: route.choice,
-        confidence: route.confidence,
-        ...(route.probabilities ? { probabilities: route.probabilities } : {}),
+        choice: route.data.choice,
+        confidence: route.data.confidence,
+        ...(route.data.probabilities ? { probabilities: route.data.probabilities } : {}),
       });
     }
 

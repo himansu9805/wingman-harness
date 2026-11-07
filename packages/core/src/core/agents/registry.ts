@@ -1,6 +1,7 @@
 import { AgentDefinitionSchema, type AgentDefinition } from "./definition";
 import { McpServerIdSchema, type RegisteredMcpGrant } from "../../mcp/grants";
 import type { AgentCapabilitiesCatalog } from "./catalogue";
+import { MEMORY_TOOL_NAMES } from "../../tools/names";
 export type { AgentCapabilitiesCatalog } from "./catalogue";
 
 export type RegisteredAgentDefinition = Readonly<
@@ -70,6 +71,22 @@ export class AgentRegistry {
       definition.id, "localTools", capabilities.useGlobalTools,
     );
     this.validateSelection(definition.id, "skills", capabilities.skills);
+    const selectedTools = [...capabilities.useGlobalTools, ...capabilities.tools];
+    for (const name of selectedTools) {
+      if (MEMORY_TOOL_NAMES.has(name) && (
+        capabilities.memory === "none" ||
+        (capabilities.memory === "read" && name !== "recall_memory")
+      )) {
+        throw new Error(`Agent "${definition.id}" cannot use "${name}" with memory policy "${capabilities.memory}"`);
+      }
+    }
+    const hasSkills = capabilities.skills === "all" ? this.available.skills.size > 0 : capabilities.skills.length > 0;
+    if (hasSkills && !selectedTools.includes("load_skill")) {
+      throw new Error(`Agent "${definition.id}" must select load_skill to use skills`);
+    }
+    if (!hasSkills && capabilities.skills !== "all" && selectedTools.includes("load_skill")) {
+      throw new Error(`Agent "${definition.id}" selected load_skill without any permitted skills`);
+    }
     const own = this.agents.get(definition.id);
     for (const name of capabilities.tools) {
       if (!own?.tools.has(name)) {

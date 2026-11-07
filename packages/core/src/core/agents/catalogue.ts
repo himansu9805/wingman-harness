@@ -30,6 +30,16 @@ export class AgentToolCatalogue {
     this.agents = new Map(Object.entries(agentTools).map(([id, tools]) => [id, toolMap(tools)]));
   }
 
+  /** Shared names used to validate opt-in selections during registration. */
+  globalNames(): readonly string[] {
+    return [...this.global.keys()];
+  }
+
+  /** Private names used to validate selections for one owner. */
+  privateNames(agentId: string): readonly string[] {
+    return [...(this.agents.get(agentId)?.keys() ?? [])];
+  }
+
   /** Returns only selected global tools and selected tools owned by this agent. */
   resolve(agentId: string, useGlobalTools: readonly string[], ownTools: readonly string[]): StructuredToolInterface[] {
     const selected = [

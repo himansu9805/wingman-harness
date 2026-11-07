@@ -1,61 +1,73 @@
 import { createAgent, dynamicSystemPromptMiddleware } from "langchain";
-import { tools as localTools } from "../tools/tools";
-import { strongModel, modelRouter } from "./router";
 import { buildSystemPrompt } from "./prompt";
 import type { CoreRuntime } from "./runtime";
-import { createDefaultAgentDefinition } from "./agents/defaults";
-import { AgentToolCatalogue } from "./agents/catalogue";
-import { settings } from "../settings";
+import type { RegisteredAgentDefinition } from "./agents/registry";
+import { createLoadSkillTool } from "../tools/tools";
+import { renderSkillIndex } from "../skills/skills";
+import type { StructuredToolInterface } from "@langchain/core/tools";
 
-/** Builds the model/tool loop using borrowed runtime services. */
-async function buildAgentGraph(runtime: CoreRuntime) {
+/** Resolves a registered role without acquiring a second set of runtime services. */
+async function buildAgentGraph(
+  runtime: CoreRuntime,
+  definition: RegisteredAgentDefinition,
+) {
   runtime.assertOpen();
-
-  const { mcp, skillIndex, checkpointer } = runtime;
-  const definition = createDefaultAgentDefinition(settings.SCHEDULER_ENABLED);
-  const selectedTools = new AgentToolCatalogue(localTools).resolve(
-    definition.id,
-    definition.capabilities.useGlobalTools,
-    definition.capabilities.tools,
-  );
-  const mcpTools = await mcp.getTools(definition.id, definition.capabilities);
+  const capabilities = definition.capabilities;
+  const selection = capabilities.skills;
+  const skills = selection === "all"
+    ? runtime.skills
+    : runtime.skills.filter(skill => selection.includes(skill.name));
+  const localTools = runtime.toolCatalogue.resolve(
+    definition.id, capabilities.useGlobalTools, capabilities.tools,
+  ).flatMap<StructuredToolInterface>(tool => tool.name === "load_skill"
+    ? (skills.length ? [createLoadSkillTool(skills, runtime.readSkill)] : [])
+    : [tool]);
+  const mcpTools = await runtime.mcp.getTools(definition.id, capabilities);
   runtime.assertOpen();
-  const names = new Set<string>(selectedTools.map((tool) => tool.name));
-  for (const tool of mcpTools) {
-    if (names.has(tool.name)) {
-      throw new Error(`Duplicate agent tool name "${tool.name}"`);
-    }
-    names.add(tool.name);
+  const tools = [...localTools, ...mcpTools];
+  const toolNames = tools.map(tool => tool.name);
+  if (new Set(toolNames).size !== toolNames.length) {
+    throw new Error(`Duplicate tools for agent "${definition.id}"`);
   }
+  const skillIndex = renderSkillIndex(skills);
+  const model = definition.model === "fast" ? runtime.models.fast : runtime.models.powerful;
 
-  return createAgent({
-    // The router selects the model for each turn.
-    model: strongModel,
-    tools: [...selectedTools, ...mcpTools],
-    middleware: [
-      modelRouter,
-      dynamicSystemPromptMiddleware(async () =>
-        buildSystemPrompt(await runtime.getMemoryIndex(), skillIndex),
-      ),
-    ],
-    checkpointer,
-  });
+  const parameters = {
+    model,
+    tools,
+    checkpointer: runtime.checkpointer,
+  };
+  const prompt = dynamicSystemPromptMiddleware(async () => buildSystemPrompt({
+    definition,
+    toolNames,
+    memoryIndex: capabilities.memory === "none" ? "" : await runtime.getMemoryIndex(),
+    skillIndex,
+  }));
+  if (definition.model === "routed") {
+    return createAgent({ ...parameters, middleware: [runtime.models.routingMiddleware, prompt] as const });
+  }
+  return createAgent({ ...parameters, middleware: [prompt] as const });
 }
 
-/** An agent graph whose shared infrastructure is owned by its runtime. */
+/** A role-specific graph borrowing services owned by its application runtime. */
 export class Agent {
   private constructor(
+    readonly id: string,
     readonly app: Awaited<ReturnType<typeof buildAgentGraph>>,
   ) {}
 
   /**
-   * Creates a graph using runtime-owned services. Granted MCP profiles connect
-   * lazily on first use and are reused by later graphs sharing this runtime.
+   * Builds a validated agent graph. Unknown IDs fail before MCP discovery.
+   * Independent executions must use distinct checkpoint thread IDs; delegated
+   * execution namespaces are supplied by the orchestration layer.
    *
-   * @param runtime The initialized application runtime.
-   * @throws If runtime shutdown has already started.
+   * @param runtime The application-owned services and validated role registry.
+   * @param agentId Registered role ID; existing entry points use "default".
+   * @throws If the role is unknown, discovery fails, or shutdown has started.
    */
-  static async create(runtime: CoreRuntime): Promise<Agent> {
-    return new Agent(await buildAgentGraph(runtime));
+  static async create(runtime: CoreRuntime, agentId = "default"): Promise<Agent> {
+    runtime.assertOpen();
+    const definition = runtime.agents.get(agentId);
+    return new Agent(definition.id, await buildAgentGraph(runtime, definition));
   }
 }

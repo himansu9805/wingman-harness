@@ -6,7 +6,7 @@ import { AgentToolCatalogue } from "../src/core/agents/catalogue.ts";
 
 function registry() {
   return new AgentRegistry({
-    localTools: ["read_file", "write_file"],
+    localTools: ["read_file", "write_file", "load_skill", "recall_memory", "remember", "log_conversation"],
     mcpServers: ["docs", "search"],
     skills: ["review"],
     agents: {
@@ -114,4 +114,21 @@ test("default baseline has explicit tool names and no automatic global MCP grant
   assert.ok(scheduled.capabilities.useGlobalTools.includes("schedule_task"));
   assert.deepEqual(basic.capabilities.useGlobalMcpServers, []);
   assert.deepEqual(basic.capabilities.mcp, []);
+});
+
+test("memory policy rejects contradictory selected tools", () => {
+  for (const name of ["remember", "recall_memory", "log_conversation"]) {
+    assert.throws(() => registry().register(definition({ useGlobalTools: [name], memory: "none" })), /memory policy/);
+  }
+  for (const name of ["remember", "log_conversation"]) {
+    assert.throws(() => registry().register(definition({ useGlobalTools: [name], memory: "read" })), /memory policy/);
+  }
+  const reader = registry().register(definition({ useGlobalTools: ["recall_memory"], memory: "read" }));
+  assert.deepEqual(reader.capabilities.useGlobalTools, ["recall_memory"]);
+});
+
+test("skills require an explicitly selected loader and loader requires permitted skills", () => {
+  assert.throws(() => registry().register(definition({ skills: ["review"] })), /must select load_skill/);
+  assert.throws(() => registry().register(definition({ useGlobalTools: ["load_skill"], skills: [] })), /without any permitted skills/);
+  assert.deepEqual(registry().register(definition({ useGlobalTools: ["load_skill"], skills: ["review"] })).capabilities.skills, ["review"]);
 });

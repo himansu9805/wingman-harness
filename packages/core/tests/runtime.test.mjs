@@ -23,8 +23,20 @@ function fixture({ closeMcp, ...overrides } = {}) {
     },
     async loadSkills() {
       calls.push("skills");
-      return "test skills";
+      return [{ name: "test", description: "Test skill", path: "/test/SKILL.md" }];
     },
+    async loadConfiguration(skills) {
+      calls.push("configuration");
+      const { createLocalTools } = await import("../src/tools/tools.ts");
+      const { createDefaultAgentDefinition, analystAgentDefinition } = await import("../src/core/agents/defaults.ts");
+      const { fastModel, strongModel, modelRouter } = await import("../src/core/router.ts");
+      return {
+        definitions: [createDefaultAgentDefinition(), analystAgentDefinition],
+        globalTools: createLocalTools(skills),
+        models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
+      };
+    },
+    async readSkill() { return "test content"; },
     async openCheckpointer() {
       calls.push("checkpointer");
 
@@ -66,7 +78,8 @@ test("shared resources close once in dependency order", async () => {
   const runtime = await CoreRuntime.create(dependencies);
 
   assert.equal(runtime.checkpointer, saver);
-  assert.equal(runtime.skillIndex, "test skills");
+  assert.equal(runtime.skills[0].name, "test");
+  assert.ok(Object.isFrozen(runtime.skills));
   assert.equal(await runtime.getMemoryIndex(), "test memory");
 
   const closing = runtime.close();
@@ -74,7 +87,7 @@ test("shared resources close once in dependency order", async () => {
   assert.equal(runtime.close(), closing);
   await closing;
 
-  assert.deepEqual(calls, ["tools", "skills", "checkpointer", ...cleanupOrder]);
+  assert.deepEqual(calls, ["tools", "skills", "configuration", "checkpointer", ...cleanupOrder]);
   assert.throws(() => runtime.checkpointer, /closed/);
   assert.throws(() => runtime.getMemoryIndex(), /closed/);
 });
@@ -122,7 +135,7 @@ test("cleanup continues after failures and retains every error", async () => {
   });
 
   assert.equal(runtime.close(), closing);
-  assert.deepEqual(calls.slice(3), cleanupOrder);
+  assert.deepEqual(calls.slice(4), cleanupOrder);
 });
 
 test("startup and cleanup failures are both preserved", async () => {
@@ -183,7 +196,7 @@ test("two agent graphs reuse the same checkpoint store", async () => {
     const state = await second.app.graph.getState(config);
 
     assert.equal(state.values.messages[0].content, "persisted");
-    assert.deepEqual(calls, ["tools", "skills", "checkpointer"]);
+    assert.deepEqual(calls, ["tools", "skills", "configuration", "checkpointer"]);
   } finally {
     await runtime.close();
   }
@@ -225,6 +238,7 @@ test("concurrent startup is shared and shutdown waits for it", async () => {
     assert.deepEqual(calls, [
       "tools",
       "skills",
+      "configuration",
       "checkpointer",
       ...cleanupOrder,
     ]);
@@ -234,4 +248,22 @@ test("concurrent startup is shared and shutdown waits for it", async () => {
   } finally {
     CoreRuntime.create = originalCreate;
   }
+});
+
+test("registration failure releases the already acquired saver and MCP manager", async () => {
+  const { calls, dependencies } = fixture();
+  const load = dependencies.loadConfiguration;
+  dependencies.loadConfiguration = async skills => {
+    const configuration = await load(skills);
+    return { ...configuration, definitions: [...configuration.definitions, configuration.definitions[0]] };
+  };
+  await assert.rejects(CoreRuntime.create(dependencies), /already registered/);
+  assert.deepEqual(calls, ["tools", "skills", "configuration", "checkpointer", ...cleanupOrder]);
+});
+
+test("configuration failure releases MCP without opening a checkpoint store", async () => {
+  const failure = new Error("configuration unavailable");
+  const { calls, dependencies } = fixture({ async loadConfiguration() { throw failure; } });
+  await assert.rejects(CoreRuntime.create(dependencies), error => error === failure);
+  assert.deepEqual(calls, ["tools", "skills", ...cleanupOrder.filter(name => name !== "close checkpointer")]);
 });

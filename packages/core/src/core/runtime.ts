@@ -1,10 +1,16 @@
 import type { McpConnections } from "../mcp/mcp";
 import type { CheckpointStore } from "./checkpointer";
+import type { SkillMeta } from "../skills/skills";
+import type { AgentConfiguration, AgentModels } from "./agents/configuration";
+import { AgentToolCatalogue } from "./agents/catalogue";
+import { AgentRegistry } from "./agents/registry";
 
 /** Infrastructure operations supplied by production adapters or test fixtures. */
 export interface RuntimeDependencies {
   openMcp(): Promise<McpConnections>;
-  loadSkills(): Promise<string>;
+  loadSkills(): Promise<readonly SkillMeta[]>;
+  loadConfiguration(skills: readonly SkillMeta[]): Promise<AgentConfiguration>;
+  readSkill(skill: SkillMeta): Promise<string>;
   openCheckpointer(): Promise<CheckpointStore>;
   getMemoryIndex(): Promise<string>;
   stopScheduler(): Promise<void>;
@@ -19,8 +25,16 @@ const defaultDependencies: RuntimeDependencies = {
     return openMcpConnections(settings.MCP_CONFIG_PATH);
   },
   async loadSkills() {
-    const { renderSkillIndex } = await import("../skills/skills");
-    return renderSkillIndex();
+    const { listSkills } = await import("../skills/skills");
+    return listSkills();
+  },
+  async loadConfiguration(skills) {
+    const { loadAgentConfiguration } = await import("./agents/configuration");
+    return loadAgentConfiguration(skills);
+  },
+  async readSkill(skill) {
+    const { loadSkillContent } = await import("../skills/skills");
+    return loadSkillContent(skill);
   },
   async openCheckpointer() {
     const { createCheckpointer } = await import("./checkpointer");
@@ -52,13 +66,32 @@ const defaultDependencies: RuntimeDependencies = {
 export class CoreRuntime {
   private closing?: Promise<void>;
   private closed = false;
+  readonly agents: AgentRegistry;
+  readonly toolCatalogue: AgentToolCatalogue;
+  readonly models: AgentModels;
 
   private constructor(
     private readonly dependencies: RuntimeDependencies,
     readonly mcp: McpConnections,
-    readonly skillIndex: string,
+    readonly skills: readonly SkillMeta[],
     private readonly checkpoints: CheckpointStore,
-  ) {}
+    configuration: AgentConfiguration,
+  ) {
+    this.toolCatalogue = new AgentToolCatalogue(configuration.globalTools, configuration.agentTools);
+    this.models = Object.freeze({ ...configuration.models });
+    this.agents = new AgentRegistry({
+      localTools: this.toolCatalogue.globalNames(),
+      mcpServers: mcp.serverIds,
+      skills: skills.map(skill => skill.name),
+      agents: Object.fromEntries(configuration.definitions.map(definition => [definition.id, {
+        tools: this.toolCatalogue.privateNames(definition.id),
+        mcpServers: mcp.privateServerIds(definition.id),
+      }])),
+    });
+    for (const definition of configuration.definitions) this.agents.register(definition);
+    // Every existing CLI/server entry point uses this agent unless given an ID.
+    this.agents.get("default");
+  }
 
   /**
    * Acquires infrastructure and releases acquired resources if startup fails.
@@ -77,10 +110,11 @@ export class CoreRuntime {
     try {
       // Acquire sequentially so cleanup cannot race pending initialization.
       mcp = await dependencies.openMcp();
-      const skillIndex = await dependencies.loadSkills();
+      const skills = Object.freeze((await dependencies.loadSkills()).map(skill => Object.freeze({ ...skill })));
+      const configuration = await dependencies.loadConfiguration(skills);
       checkpoints = await dependencies.openCheckpointer();
 
-      return new CoreRuntime(dependencies, mcp, skillIndex, checkpoints);
+      return new CoreRuntime(dependencies, mcp, skills, checkpoints, configuration);
     } catch (error) {
       try {
         await releaseResources(dependencies, checkpoints, mcp);
@@ -120,6 +154,14 @@ export class CoreRuntime {
 
     return this.dependencies.getMemoryIndex();
   }
+
+  /** Reads only metadata from this runtime's snapshot of installed skills. */
+  readSkill = (skill: SkillMeta): Promise<string> => {
+    if (this.closed) throw new Error("Agent runtime is closed");
+    const installed = this.skills.find(candidate => candidate.name === skill.name && candidate.path === skill.path);
+    if (!installed) throw new Error("Skill is not in the runtime catalogue");
+    return this.dependencies.readSkill(installed);
+  };
 
   /**
    * Drains the scheduler and attempts every remaining cleanup in order.

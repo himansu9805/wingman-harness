@@ -17,7 +17,7 @@ function createChatModel(baseUrl: string, model: string, apiKey: string) {
   });
 }
 
-const fastModel = createChatModel(
+export const fastModel = createChatModel(
   settings.FAST_MODEL_BASE_URL,
   settings.FAST_MODEL_NAME,
   settings.FAST_MODEL_API_KEY,

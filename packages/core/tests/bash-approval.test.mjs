@@ -8,6 +8,7 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { createAgent } from 'langchain';
 import { bashTools } from '../src/tools/bash.ts';
+import { createDefaultAgentDefinition } from '../src/core/agents/defaults.ts';
 import { buildSystemPrompt } from '../src/core/prompt.ts';
 import { startTurn, resumeTurn, getPendingApprovals } from '../src/core/turn.ts';
 
@@ -27,13 +28,13 @@ class ShellModel extends BaseChatModel {
 }
 
 function agent() {
-  return { app: createAgent({ model: new ShellModel({}), tools: bashTools, checkpointer: new MemorySaver(), systemPrompt: buildSystemPrompt('', '') }) };
+  return { app: createAgent({ model: new ShellModel({}), tools: bashTools, checkpointer: new MemorySaver(), systemPrompt: buildSystemPrompt({ definition: createDefaultAgentDefinition(), toolNames: ['exec_bash_command'], memoryIndex: '', skillIndex: '' }) }) };
 }
 
 const options = () => ({ signal: AbortSignal.timeout(10_000) });
 
 test('system instructions distinguish blocked commands from explicit retries after decline', () => {
-  const prompt = buildSystemPrompt('', '');
+  const prompt = buildSystemPrompt({ definition: createDefaultAgentDefinition(), toolNames: ['exec_bash_command'], memoryIndex: '', skillIndex: '' });
   assert.match(prompt, /blocked[^\n]*never retry/i);
   assert.match(prompt, /declines[^\n]*on your own/i);
   assert.match(prompt, /explicitly asks[^\n]*again[^\n]*approval/i);
