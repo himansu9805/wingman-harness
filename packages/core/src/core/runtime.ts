@@ -1,22 +1,22 @@
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import type { McpConnections } from "../mcp/mcp";
 import type { CheckpointStore } from "./checkpointer";
 
 /** Infrastructure operations supplied by production adapters or test fixtures. */
 export interface RuntimeDependencies {
-  loadTools(): Promise<StructuredToolInterface[]>;
+  openMcp(): Promise<McpConnections>;
   loadSkills(): Promise<string>;
   openCheckpointer(): Promise<CheckpointStore>;
   getMemoryIndex(): Promise<string>;
   stopScheduler(): Promise<void>;
   closeResults(): Promise<void>;
-  closeTools(): Promise<void>;
   closeMemory(): Promise<void>;
 }
 
 const defaultDependencies: RuntimeDependencies = {
-  async loadTools() {
-    const { loadMcpTools } = await import("../mcp/mcp");
-    return loadMcpTools();
+  async openMcp() {
+    const { openMcpConnections } = await import("../mcp/mcp");
+    const { settings } = await import("../settings");
+    return openMcpConnections(settings.MCP_CONFIG_PATH);
   },
   async loadSkills() {
     const { renderSkillIndex } = await import("../skills/skills");
@@ -38,10 +38,6 @@ const defaultDependencies: RuntimeDependencies = {
     const { closeResults } = await import("../scheduler/results");
     await closeResults();
   },
-  async closeTools() {
-    const { closeMcpTools } = await import("../mcp/mcp");
-    await closeMcpTools();
-  },
   async closeMemory() {
     const { GraphMemory } = await import("../memory/graph");
     await GraphMemory.closeInstance();
@@ -59,7 +55,7 @@ export class CoreRuntime {
 
   private constructor(
     private readonly dependencies: RuntimeDependencies,
-    readonly mcpTools: StructuredToolInterface[],
+    readonly mcp: McpConnections,
     readonly skillIndex: string,
     private readonly checkpoints: CheckpointStore,
   ) {}
@@ -76,17 +72,18 @@ export class CoreRuntime {
     dependencies: RuntimeDependencies = defaultDependencies,
   ): Promise<CoreRuntime> {
     let checkpoints: CheckpointStore | undefined;
+    let mcp: McpConnections | undefined;
 
     try {
       // Acquire sequentially so cleanup cannot race pending initialization.
-      const tools = await dependencies.loadTools();
+      mcp = await dependencies.openMcp();
       const skillIndex = await dependencies.loadSkills();
       checkpoints = await dependencies.openCheckpointer();
 
-      return new CoreRuntime(dependencies, tools, skillIndex, checkpoints);
+      return new CoreRuntime(dependencies, mcp, skillIndex, checkpoints);
     } catch (error) {
       try {
-        await releaseResources(dependencies, checkpoints);
+        await releaseResources(dependencies, checkpoints, mcp);
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
@@ -135,6 +132,7 @@ export class CoreRuntime {
     return (this.closing ??= releaseResources(
       this.dependencies,
       this.checkpoints,
+      this.mcp,
     ).finally(() => {
       this.closed = true;
     }));
@@ -145,6 +143,7 @@ export class CoreRuntime {
 async function releaseResources(
   dependencies: RuntimeDependencies,
   checkpoints?: CheckpointStore,
+  mcp?: McpConnections,
 ): Promise<void> {
   const errors: unknown[] = [];
 
@@ -152,7 +151,7 @@ async function releaseResources(
   const cleanupSteps = [
     () => dependencies.stopScheduler(),
     () => dependencies.closeResults(),
-    () => dependencies.closeTools(),
+    () => mcp?.close(),
     () => checkpoints?.close(),
     () => dependencies.closeMemory(),
   ];

@@ -7,14 +7,19 @@ import {
   closeRuntime,
 } from "../src/core/runtime.ts";
 
-function fixture(overrides = {}) {
+function fixture({ closeMcp, ...overrides } = {}) {
   const calls = [];
   const saver = new MemorySaver();
 
   const dependencies = {
-    async loadTools() {
+    async openMcp() {
       calls.push("tools");
-      return [];
+      return {
+        serverIds: [],
+        privateServerIds() { return []; },
+        async getTools() { return []; },
+        close: closeMcp ?? (async () => { calls.push("close tools"); }),
+      };
     },
     async loadSkills() {
       calls.push("skills");
@@ -38,9 +43,6 @@ function fixture(overrides = {}) {
     },
     async closeResults() {
       calls.push("close results");
-    },
-    async closeTools() {
-      calls.push("close tools");
     },
     async closeMemory() {
       calls.push("close memory");
@@ -105,7 +107,7 @@ test("cleanup continues after failures and retains every error", async () => {
       calls.push("stop scheduler");
       throw schedulerError;
     },
-    async closeTools() {
+    async closeMcp() {
       calls.push("close tools");
       throw mcpError;
     },
@@ -131,7 +133,7 @@ test("startup and cleanup failures are both preserved", async () => {
     async openCheckpointer() {
       throw startupError;
     },
-    async closeTools() {
+    async closeMcp() {
       throw cleanupError;
     },
   });

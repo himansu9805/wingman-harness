@@ -1,19 +1,31 @@
 import type { AgentDefinition } from "./definition";
 
-/** Preserves the existing interactive Wingman configuration. */
-export const defaultAgentDefinition = {
-  id: "default",
-  description: "General-purpose Wingman assistant",
-  instructions:
-    "Help the user complete their request using the available capabilities.",
-  model: "routed",
-  capabilities: {
-    localTools: "all",
-    mcpTools: "all",
-    skills: "all",
-    memory: "read-write",
-  },
-} satisfies AgentDefinition;
+/** Explicit baseline selections for the interactive agent; MCP access is opt-in. */
+export function createDefaultAgentDefinition(
+  schedulerEnabled = false,
+): AgentDefinition {
+  return {
+    id: "default",
+    description: "General-purpose Wingman assistant",
+    instructions:
+      "Help the user complete their request using the available capabilities.",
+    model: "routed",
+    capabilities: {
+      useGlobalTools: [
+        "load_skill", "remember", "recall_memory", "log_conversation", "exec_bash_command",
+        ...(schedulerEnabled ? [
+          "schedule_task", "schedule_recurring_task", "list_scheduled_tasks",
+          "cancel_scheduled_task", "show_scheduled_task_runs",
+        ] : []),
+      ],
+      tools: [],
+      useGlobalMcpServers: [],
+      mcp: [],
+      skills: "all",
+      memory: "read-write",
+    },
+  };
+}
 
 /**
  * Reviews supplied information without external access or side effects.
@@ -31,8 +43,10 @@ export const analystAgentDefinition = {
   ].join("\n"),
   model: "powerful",
   capabilities: {
-    localTools: [],
-    mcpTools: [],
+    useGlobalTools: [],
+    tools: [],
+    useGlobalMcpServers: [],
+    mcp: [],
     skills: [],
     memory: "none",
   },

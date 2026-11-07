@@ -1,20 +1,18 @@
 import { z } from "zod";
+import { McpGrantsSchema } from "../../mcp/grants";
 
 /**
- * Selects every available capability or an explicit list.
+ * Explicitly selects capability names; nothing is inherited automatically.
  * An empty list grants no capabilities in that category.
  */
-const capabilitySelection = z.union([
-  z.literal("all"),
-  z.array(z.string().trim().min(1)).superRefine((names, context) => {
-    if (new Set(names).size !== names.length) {
-      context.addIssue({
-        code: "custom",
-        message: "Capability names must be unique",
-      });
-    }
-  }),
-]);
+const toolSelection = z.array(z.string().trim().min(1)).superRefine((names, context) => {
+  if (new Set(names).size !== names.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Capability names must be unique",
+    });
+  }
+});
 
 /**
  * Trusted configuration describing an agent's role and permitted capabilities.
@@ -38,9 +36,14 @@ export const AgentDefinitionSchema = z
 
     capabilities: z
       .object({
-        localTools: capabilitySelection,
-        mcpTools: capabilitySelection,
-        skills: capabilitySelection,
+        /** Selections from the shared catalogue; omitted lists grant nothing. */
+        useGlobalTools: toolSelection.default([]),
+        /** Selections from this agent's private tool catalogue. */
+        tools: toolSelection.default([]),
+        useGlobalMcpServers: McpGrantsSchema.default([]),
+        /** Selections from MCP profiles configured under this agent's ID. */
+        mcp: McpGrantsSchema.default([]),
+        skills: z.union([z.literal("all"), toolSelection]),
 
         /**
          * Controls both memory tools and memory included in the system prompt.

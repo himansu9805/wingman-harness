@@ -1,25 +1,20 @@
 import { AgentDefinitionSchema, type AgentDefinition } from "./definition";
+import { McpServerIdSchema, type RegisteredMcpGrant } from "../../mcp/grants";
+import type { AgentCapabilitiesCatalog } from "./catalogue";
+export type { AgentCapabilitiesCatalog } from "./catalogue";
 
 export type RegisteredAgentDefinition = Readonly<
   Omit<AgentDefinition, "capabilities">
 > & {
   readonly capabilities: {
-    readonly localTools: "all" | readonly string[];
-    readonly mcpTools: "all" | readonly string[];
+    readonly useGlobalTools: readonly string[];
+    readonly tools: readonly string[];
+    readonly useGlobalMcpServers: readonly RegisteredMcpGrant[];
+    readonly mcp: readonly RegisteredMcpGrant[];
     readonly skills: "all" | readonly string[];
     readonly memory: AgentDefinition["capabilities"]["memory"];
   };
 };
-
-/**
- * Available capability names discovered during application startup.
- * Actual tool implementations remain owned by the runtime.
- */
-export interface AgentCapabilitiesCatalog {
-  localTools: readonly string[];
-  mcpTools: readonly string[];
-  skills: readonly string[];
-}
 
 /** Stores trusted agent definitions and rejects invalid registrations. */
 export class AgentRegistry {
@@ -27,22 +22,33 @@ export class AgentRegistry {
 
   private readonly available: {
     localTools: ReadonlySet<string>;
-    mcpTools: ReadonlySet<string>;
+    mcpServers: ReadonlySet<string>;
     skills: ReadonlySet<string>;
   };
+
+  private readonly agents: ReadonlyMap<string, {
+    tools: ReadonlySet<string>;
+    mcpServers: ReadonlySet<string>;
+  }>;
 
   constructor(catalogue: AgentCapabilitiesCatalog) {
     this.available = {
       localTools: uniqueNames(catalogue.localTools, "local tools"),
-      mcpTools: uniqueNames(catalogue.mcpTools, "MCP tools"),
+      mcpServers: uniqueNames(
+        catalogue.mcpServers.map(id => McpServerIdSchema.parse(id)),
+        "MCP servers",
+      ),
       skills: uniqueNames(catalogue.skills, "skills"),
     };
-
-    for (const name of this.available.mcpTools) {
-      if (this.available.localTools.has(name)) {
-        throw new Error(`Tool name "${name}" is shared by local and MCP tools`);
-      }
-    }
+    this.agents = new Map(
+      Object.entries(catalogue.agents ?? {}).map(([id, own]) => [id, {
+        tools: uniqueNames(own.tools, `agent "${id}" tools`),
+        mcpServers: uniqueNames(
+          own.mcpServers.map(name => McpServerIdSchema.parse(name)),
+          `agent "${id}" MCP servers`,
+        ),
+      }]),
+    );
   }
 
   /**
@@ -61,19 +67,39 @@ export class AgentRegistry {
     const { capabilities } = definition;
 
     this.validateSelection(
-      definition.id,
-      "localTools",
-      capabilities.localTools,
+      definition.id, "localTools", capabilities.useGlobalTools,
     );
-    this.validateSelection(definition.id, "mcpTools", capabilities.mcpTools);
     this.validateSelection(definition.id, "skills", capabilities.skills);
+    const own = this.agents.get(definition.id);
+    for (const name of capabilities.tools) {
+      if (!own?.tools.has(name)) {
+        throw new Error(`Unknown private tool "${name}" for agent "${definition.id}"`);
+      }
+      if (capabilities.useGlobalTools.includes(name)) {
+        throw new Error(`Duplicate agent tool name "${name}"`);
+      }
+    }
+    for (const [grants, available, scope] of [
+      [capabilities.useGlobalMcpServers, this.available.mcpServers, "global"],
+      [capabilities.mcp, own?.mcpServers ?? new Set<string>(), "private"],
+    ] as const) {
+      for (const grant of grants) {
+        if (!available.has(grant.serverId)) {
+          throw new Error(
+            `Agent "${definition.id}" references unknown ${scope} MCP server "${grant.serverId}"`,
+          );
+        }
+      }
+    }
 
     const registered = Object.freeze({
       ...definition,
       capabilities: Object.freeze({
         ...capabilities,
-        localTools: freezeSelection(capabilities.localTools),
-        mcpTools: freezeSelection(capabilities.mcpTools),
+        useGlobalTools: Object.freeze([...capabilities.useGlobalTools]),
+        tools: Object.freeze([...capabilities.tools]),
+        useGlobalMcpServers: freezeGrants(capabilities.useGlobalMcpServers),
+        mcp: freezeGrants(capabilities.mcp),
         skills: freezeSelection(capabilities.skills),
       }),
     });
@@ -100,7 +126,7 @@ export class AgentRegistry {
 
   private validateSelection(
     agentId: string,
-    category: keyof AgentRegistry["available"],
+    category: "localTools" | "skills",
     selection: "all" | readonly string[],
   ): void {
     if (selection === "all") return;
@@ -132,4 +158,13 @@ function freezeSelection(
   selection: "all" | string[],
 ): "all" | readonly string[] {
   return selection === "all" ? selection : Object.freeze([...selection]);
+}
+
+function freezeGrants(
+  grants: readonly RegisteredMcpGrant[],
+): readonly RegisteredMcpGrant[] {
+  return Object.freeze(grants.map(grant => Object.freeze({
+    serverId: grant.serverId,
+    tools: grant.tools === "all" ? "all" : Object.freeze([...grant.tools]),
+  })));
 }
