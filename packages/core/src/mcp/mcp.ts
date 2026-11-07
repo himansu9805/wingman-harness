@@ -66,8 +66,10 @@ export function loadMcpTools(): Promise<StructuredToolInterface[]> {
  * @returns A promise that resolves when all connections are closed.
  */
 export async function closeMcpTools(): Promise<void> {
-  if (cachedClient) {
-    await cachedClient.close();
-    cachedClient = null;
-  }
+  const client = cachedClient;
+
+  cachedClient = null;
+  cachedToolsPromise = null;
+
+  await client?.close();
 }

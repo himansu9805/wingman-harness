@@ -6,10 +6,21 @@ export const AGENT_RUNTIME = Symbol("AGENT_RUNTIME");
 export interface AgentRuntime {
   create(): Promise<Agent>;
   schedulerEnabled(): Promise<boolean>;
-  listTasks(limit: number, before?: string): Promise<Awaited<ReturnType<typeof import("@wingman/core/tasks").listTaskPage>>>;
+  listTasks(
+    limit: number,
+    before?: string,
+  ): Promise<
+    Awaited<ReturnType<typeof import("@wingman/core/tasks").listTaskPage>>
+  >;
   scheduledThreadIds(ids: string[]): Promise<string[]>;
   cancelTask(id: string): Promise<boolean>;
-  taskRuns(limit: number, jobId?: string, before?: string): Promise<Awaited<ReturnType<typeof import("@wingman/core/tasks").getTaskRunPage>>>;
+  taskRuns(
+    limit: number,
+    jobId?: string,
+    before?: string,
+  ): Promise<
+    Awaited<ReturnType<typeof import("@wingman/core/tasks").getTaskRunPage>>
+  >;
   close(): Promise<void>;
   startScheduler(dispatch: JobDispatcher): Promise<void>;
   stopScheduler(): Promise<void>;
@@ -17,14 +28,30 @@ export interface AgentRuntime {
 }
 
 export const agentRuntime: AgentRuntime = {
-  async schedulerEnabled() { return (await import("@wingman/core")).settings.SCHEDULER_ENABLED; },
-  async listTasks(limit, before) { return (await import("@wingman/core/tasks")).listTaskPage(limit, before); },
-  async scheduledThreadIds(ids) { return (await import("@wingman/core/tasks")).getScheduledThreadIds(ids); },
-  async cancelTask(id) { return (await import("@wingman/core/tasks")).cancelTask(id); },
-  async taskRuns(limit, jobId, before) { return (await import("@wingman/core/tasks")).getTaskRunPage(limit, jobId, before); },
+  async schedulerEnabled() {
+    return (await import("@wingman/core")).settings.SCHEDULER_ENABLED;
+  },
+  async listTasks(limit, before) {
+    return (await import("@wingman/core/tasks")).listTaskPage(limit, before);
+  },
+  async scheduledThreadIds(ids) {
+    return (await import("@wingman/core/tasks")).getScheduledThreadIds(ids);
+  },
+  async cancelTask(id) {
+    return (await import("@wingman/core/tasks")).cancelTask(id);
+  },
+  async taskRuns(limit, jobId, before) {
+    return (await import("@wingman/core/tasks")).getTaskRunPage(
+      limit,
+      jobId,
+      before,
+    );
+  },
   async create() {
-    const { Agent } = await import("@wingman/core");
-    return Agent.create();
+    const { Agent, initializeRuntime } = await import("@wingman/core");
+
+    const runtime = await initializeRuntime();
+    return Agent.create(runtime);
   },
   async startScheduler(dispatch) {
     const core = await import("@wingman/core");

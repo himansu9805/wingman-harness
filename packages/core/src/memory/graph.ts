@@ -194,6 +194,14 @@ export class GraphMemory {
     }
   }
 
+  /** Closes existing memory without creating a database during shutdown. */
+  static async closeInstance(): Promise<void> {
+    const instance = GraphMemory.instance;
+    GraphMemory.instance = null;
+
+    await instance?.closeGraph();
+  }
+
   /**
    * Closes the graph database connection.
    */

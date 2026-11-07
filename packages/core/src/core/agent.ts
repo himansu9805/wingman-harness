@@ -1,48 +1,40 @@
 import { createAgent, dynamicSystemPromptMiddleware } from "langchain";
 import { tools as localTools } from "../tools/tools";
-import { renderSkillIndex } from "../skills/skills";
-import { loadMcpTools } from "../mcp/mcp";
-import { GraphMemory } from "../memory/graph";
 import { strongModel, modelRouter } from "./router";
 import { buildSystemPrompt } from "./prompt";
-import { createCheckpointer } from "./checkpointer";
+import type { CoreRuntime } from "./runtime";
 
-/**
- * Builds the agent graph: routes each turn to a model, then loops
- * model → tools until the model answers.
- */
-async function buildAgentGraph() {
-  const [mcpTools, skillIndex, checkpointer] = await Promise.all([
-    loadMcpTools(),
-    renderSkillIndex(),
-    createCheckpointer(),
-  ]);
+/** Builds the model/tool loop using borrowed runtime services. */
+function buildAgentGraph(runtime: CoreRuntime) {
+  runtime.assertOpen();
+
+  const { mcpTools, skillIndex, checkpointer } = runtime;
 
   return createAgent({
-    // The router overrides this on every call; it's the declared default.
+    // The router selects the model for each turn.
     model: strongModel,
     tools: [...localTools, ...mcpTools],
     middleware: [
       modelRouter,
-      // Rebuilt before every model call, so new memories show up mid-session.
       dynamicSystemPromptMiddleware(async () =>
-        buildSystemPrompt(
-          await GraphMemory.getInstance().getMemoryIndex(),
-          skillIndex,
-        ),
+        buildSystemPrompt(await runtime.getMemoryIndex(), skillIndex),
       ),
     ],
     checkpointer,
   });
 }
 
+/** An agent graph whose shared infrastructure is owned by its runtime. */
 export class Agent {
-  private constructor(
-    readonly app: Awaited<ReturnType<typeof buildAgentGraph>>,
-  ) {}
+  private constructor(readonly app: ReturnType<typeof buildAgentGraph>) {}
 
-  /** Creates the agent once MCP tools and skills have loaded. */
-  static async create(): Promise<Agent> {
-    return new Agent(await buildAgentGraph());
+  /**
+   * Creates a graph without acquiring additional infrastructure connections.
+   *
+   * @param runtime The initialized application runtime.
+   * @throws If runtime shutdown has already started.
+   */
+  static async create(runtime: CoreRuntime): Promise<Agent> {
+    return new Agent(buildAgentGraph(runtime));
   }
 }
