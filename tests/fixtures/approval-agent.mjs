@@ -38,5 +38,5 @@ export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } 
   }, { name: 'test_action', description: 'Test action requiring approval', schema: z.object({ command: z.string() }) });
   const model = new ApprovalModel({});
   model.usage = usage;
-  return { agent: { app: createAgent({ model, tools: [action], checkpointer }) }, executions };
+  return { agent: { async deleteDelegatedState() {}, app: createAgent({ model, tools: [action], checkpointer }) }, executions };
 }

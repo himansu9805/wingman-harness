@@ -35,6 +35,9 @@ function enqueueTurn<T>(fn: () => Promise<T>): Promise<T> {
  */
 async function printEvent(event: TurnEvent): Promise<void> {
   switch (event.type) {
+    case "delegation":
+      console.log(`  🤝 ${event.agentId}: ${event.phase} [${event.taskId}]`);
+      break;
     case "route":
       console.log(`  🧭 ${formatRoute(event)}`);
       break;

@@ -163,7 +163,7 @@ function terminal(frames, type) {
 function fakeAgent(run) {
   return { app: {
     graph: { getState: async () => ({ tasks: [] }) },
-    stream: async (input, options) => run(input, options),
+    stream: async function* (input, options) { for await (const update of run(input, options)) yield ["updates", update]; },
   } };
 }
 
@@ -822,4 +822,29 @@ test('thread catalogue exposes task ownership as a boolean in one lookup per pag
   assert.equal(page.threads.find(thread => thread.id === 'empty').hasScheduledTasks, false);
   assert.equal(lookups.length, 1);
   assert.deepEqual(lookups[0], page.threads.map(thread => thread.id));
+});
+
+test('delegation progress and usage are journaled in the parent chat and replayed after reconnect', { timeout: TIMEOUT }, async t => {
+  const { tsImport } = await import('tsx/esm/api');
+  const { createDelegationRuntime } = await tsImport('../../../tests/fixtures/delegation-runtime.mjs', import.meta.url);
+  const f = await createDelegationRuntime();
+  const api = await server(t, f.agent);
+  t.after(() => f.runtime.close());
+  const before = await api.json('', {}, 200);
+  const frames = await api.stream('fresh/messages', { message: 'Delegate analysis with PRIVATE CHAT CONTEXT' });
+  const phases = frames.filter(frame => frame.type === 'delegation').map(frame => frame.data.phase);
+  assert.deepEqual(phases, ['started', 'completed']);
+  const done = terminal(frames, 'done');
+  assert.match(done.text, /Specialist analysis/);
+  const journal = await api.journal.listAfter('fresh', '0', 100);
+  const metadata = journal.filter(row => row.payload.type === 'run').at(-1).payload.metadata;
+  assert.equal(metadata.usage.modelCalls, 3);
+  assert.equal(metadata.usage.totalTokens, 21);
+  assert.deepEqual(journal.filter(row => row.payload.type === 'delegation').map(row => row.payload.phase), phases);
+  const after = await api.json('', {}, 200);
+  assert.equal(after.threads.length, before.threads.length);
+  const [task] = await f.store.listConversation('fresh');
+  assert.equal((await api.request('fresh', { method: 'DELETE' })).status, 204);
+  assert.deepEqual(await f.store.listConversation('fresh'), []);
+  assert.equal(await f.saver.getTuple({ configurable: { thread_id: task.checkpointThreadId } }), undefined);
 });

@@ -4,6 +4,9 @@ import type { SkillMeta } from "../skills/skills";
 import type { AgentConfiguration, AgentModels } from "./agents/configuration";
 import { AgentToolCatalogue } from "./agents/catalogue";
 import { AgentRegistry } from "./agents/registry";
+import { DelegationRunner } from "./delegation/runner";
+import { createDelegationTool } from "./delegation/tool";
+import type { DelegationStore } from "./delegation/store";
 
 /** Infrastructure operations supplied by production adapters or test fixtures. */
 export interface RuntimeDependencies {
@@ -12,6 +15,7 @@ export interface RuntimeDependencies {
   loadConfiguration(skills: readonly SkillMeta[]): Promise<AgentConfiguration>;
   readSkill(skill: SkillMeta): Promise<string>;
   openCheckpointer(): Promise<CheckpointStore>;
+  openDelegations(): Promise<DelegationStore>;
   getMemoryIndex(): Promise<string>;
   stopScheduler(): Promise<void>;
   closeResults(): Promise<void>;
@@ -39,6 +43,15 @@ const defaultDependencies: RuntimeDependencies = {
   async openCheckpointer() {
     const { createCheckpointer } = await import("./checkpointer");
     return createCheckpointer();
+  },
+  async openDelegations() {
+    const { settings } = await import("../settings");
+    if (settings.POSTGRES_CONNECTION_STRING) {
+      const { PostgresDelegationStore } = await import("./delegation/postgres-store");
+      return new PostgresDelegationStore(settings.POSTGRES_CONNECTION_STRING);
+    }
+    const { MemoryDelegationStore } = await import("./delegation/store");
+    return new MemoryDelegationStore();
   },
   async getMemoryIndex() {
     const { GraphMemory } = await import("../memory/graph");
@@ -69,6 +82,7 @@ export class CoreRuntime {
   readonly agents: AgentRegistry;
   readonly toolCatalogue: AgentToolCatalogue;
   readonly models: AgentModels;
+  readonly delegations: DelegationRunner;
 
   private constructor(
     private readonly dependencies: RuntimeDependencies,
@@ -76,8 +90,23 @@ export class CoreRuntime {
     readonly skills: readonly SkillMeta[],
     private readonly checkpoints: CheckpointStore,
     configuration: AgentConfiguration,
+    private readonly delegationStore: DelegationStore,
   ) {
-    this.toolCatalogue = new AgentToolCatalogue(configuration.globalTools, configuration.agentTools);
+    const ids = new Set<string>();
+    for (const definition of configuration.definitions) {
+      if (ids.has(definition.id)) throw new Error(`Agent "${definition.id}" is already registered`);
+      ids.add(definition.id);
+    }
+    const agentTools = { ...configuration.agentTools };
+    for (const definition of configuration.definitions) {
+      if (!definition.delegation?.agents.length) continue;
+      const targets = configuration.definitions.filter(target => definition.delegation.agents.includes(target.id));
+      agentTools[definition.id] = [
+        ...(agentTools[definition.id] ?? []),
+        createDelegationTool((request, identity, invocation) => this.delegations.run(definition.id, request, identity, invocation), targets),
+      ];
+    }
+    this.toolCatalogue = new AgentToolCatalogue(configuration.globalTools, agentTools);
     this.models = Object.freeze({ ...configuration.models });
     this.agents = new AgentRegistry({
       localTools: this.toolCatalogue.globalNames(),
@@ -91,6 +120,16 @@ export class CoreRuntime {
     for (const definition of configuration.definitions) this.agents.register(definition);
     // Every existing CLI/server entry point uses this agent unless given an ID.
     this.agents.get("default");
+    this.delegations = new DelegationRunner(this.agents, delegationStore,
+      async id => {
+        const { Agent } = await import("./agent");
+        return Agent.create(this, id);
+      },
+      async id => {
+        if (!checkpoints.saver.deleteThread) throw new Error("Checkpointer cannot delete delegated state");
+        await checkpoints.saver.deleteThread(id);
+      });
+    this.delegations.validateTargets();
   }
 
   /**
@@ -106,6 +145,7 @@ export class CoreRuntime {
   ): Promise<CoreRuntime> {
     let checkpoints: CheckpointStore | undefined;
     let mcp: McpConnections | undefined;
+    let delegations: DelegationStore | undefined;
 
     try {
       // Acquire sequentially so cleanup cannot race pending initialization.
@@ -113,11 +153,13 @@ export class CoreRuntime {
       const skills = Object.freeze((await dependencies.loadSkills()).map(skill => Object.freeze({ ...skill })));
       const configuration = await dependencies.loadConfiguration(skills);
       checkpoints = await dependencies.openCheckpointer();
+      delegations = await dependencies.openDelegations();
+      await delegations.init();
 
-      return new CoreRuntime(dependencies, mcp, skills, checkpoints, configuration);
+      return new CoreRuntime(dependencies, mcp, skills, checkpoints, configuration, delegations);
     } catch (error) {
       try {
-        await releaseResources(dependencies, checkpoints, mcp);
+        await releaseResources(dependencies, checkpoints, mcp, delegations);
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
@@ -175,6 +217,8 @@ export class CoreRuntime {
       this.dependencies,
       this.checkpoints,
       this.mcp,
+      this.delegationStore,
+      this.delegations,
     ).finally(() => {
       this.closed = true;
     }));
@@ -186,13 +230,17 @@ async function releaseResources(
   dependencies: RuntimeDependencies,
   checkpoints?: CheckpointStore,
   mcp?: McpConnections,
+  delegations?: DelegationStore,
+  runner?: DelegationRunner,
 ): Promise<void> {
   const errors: unknown[] = [];
 
   // Drain the scheduler before closing services its handlers may still use.
   const cleanupSteps = [
     () => dependencies.stopScheduler(),
+    () => runner?.close(),
     () => dependencies.closeResults(),
+    () => delegations?.close(),
     () => mcp?.close(),
     () => checkpoints?.close(),
     () => dependencies.closeMemory(),

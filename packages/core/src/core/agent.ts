@@ -54,7 +54,13 @@ export class Agent {
   private constructor(
     readonly id: string,
     readonly app: Awaited<ReturnType<typeof buildAgentGraph>>,
+    private readonly runtime: CoreRuntime,
   ) {}
+
+  /** Cleans internal child checkpoints without creating or deleting sidebar chats. */
+  deleteDelegatedState(conversationId: string): Promise<void> {
+    return this.runtime.delegations.deleteConversation(conversationId);
+  }
 
   /**
    * Builds a validated agent graph. Unknown IDs fail before MCP discovery.
@@ -68,6 +74,6 @@ export class Agent {
   static async create(runtime: CoreRuntime, agentId = "default"): Promise<Agent> {
     runtime.assertOpen();
     const definition = runtime.agents.get(agentId);
-    return new Agent(definition.id, await buildAgentGraph(runtime, definition));
+    return new Agent(definition.id, await buildAgentGraph(runtime, definition), runtime);
   }
 }

@@ -11,7 +11,7 @@ function streamed(...batches) {
     async stream(input, config) {
       inputs.push({ input, config });
       const updates = batches.shift() ?? [];
-      return (async function* () { yield* updates; })();
+      return (async function* () { for (const update of updates) yield ["updates", update]; })();
     },
     graph: { async getState() { return { tasks: [] }; } },
   } };
@@ -121,7 +121,7 @@ test('cleanup stops with an explicit error if a model endlessly requests approva
   agent.app.graph.getState = async () => ({ tasks: [{ interrupts: [approval('a')] }] });
   agent.app.stream = async () => {
     rounds++;
-    return (async function* () { yield { __interrupt__: [approval('a')] }; })();
+    return (async function* () { yield ['updates', { __interrupt__: [approval('a')] }]; })();
   };
   await assert.rejects(declinePending(agent, 't', options()), /cleanup exceeded 25 rounds/);
   assert.equal(rounds, 25);
@@ -133,7 +133,7 @@ test('cleanup respects cancellation between successive pauses', async () => {
   agent.app.graph.getState = async () => ({ tasks: [{ interrupts: [approval('a')] }] });
   agent.app.stream = async () => (async function* () {
     controller.abort(new Error('cleanup cancelled'));
-    yield { __interrupt__: [approval('b')] };
+    yield ['updates', { __interrupt__: [approval('b')] }];
   })();
   await assert.rejects(declinePending(agent, 't', { signal: controller.signal }), /cleanup cancelled/);
 });
@@ -232,9 +232,9 @@ for (const [type, update] of asynchronousEventCases) {
     const agent = streamed();
     agent.app.stream = async () => (async function* () {
       try {
-        yield update;
+        yield ["updates", update];
         advanced = true;
-        yield reply('must not finish');
+        yield ['updates', reply('must not finish')];
       } finally { closed = true; }
     })();
     await assert.rejects(startTurn(agent, 'x', 'write-failure', {
@@ -278,4 +278,23 @@ test('failed model calls report unavailable usage before propagating the error',
   await assert.rejects(startTurn(agent, 'hello', 'failure', { ...options(), onModelUsage: async usage => { counts.push(usage); } }), /provider failed/);
   assert.equal(counts.length, 1);
   assert.equal(counts[0].totalTokens, null);
+});
+
+test('delegation custom frames await persistence and deduplicate child usage before completion', async () => {
+  const taskId = '11111111-1111-4111-8111-111111111111';
+  const usage = { inputTokens: 5, outputTokens: 2, totalTokens: 7, cachedInputTokens: null, reasoningOutputTokens: null };
+  const event = { type: 'delegation', phase: 'started', taskId, agentId: 'analyst', conversationId: 'chat', parentExecutionId: 'user', parentToolCallId: 'tool' };
+  const writes = [];
+  const agent = streamed([]);
+  agent.app.stream = async () => (async function* () {
+    yield ['custom', event];
+    yield ['custom', { type: 'delegation_usage', taskId, index: 0, usage }];
+    yield ['custom', { type: 'delegation_usage', taskId, index: 0, usage }];
+    yield ['updates', reply('finished')];
+  })();
+  await startTurn(agent, 'delegate', 'chat', { ...options(),
+    onEvent: async item => { await new Promise(resolve => setImmediate(resolve)); writes.push(item.type); },
+    onModelUsage: async item => { writes.push(item.totalTokens); },
+  });
+  assert.deepEqual(writes, ['delegation', 7, null]);
 });

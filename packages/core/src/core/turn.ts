@@ -6,6 +6,8 @@ import { MEMORY_TOOL_NAMES } from "../tools/names";
 import { modelUsage, type ModelUsage } from "./usage";
 import { previewToolOutput } from "./tool-output";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { DelegationStreamSchema, type DelegationEvent } from "./delegation/types";
 
 /** Routing state exists only on graphs configured with the router middleware. */
 const routeSchema = z.object({
@@ -17,6 +19,7 @@ const routeSchema = z.object({
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
+  | DelegationEvent
   | {
       type: "route";
       choice: string;
@@ -132,8 +135,8 @@ export async function runTurn(
   { signal, onEvent = async () => {}, onModelUsage = async () => {}, schedulerThreadId }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
-    configurable: { thread_id: threadId, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
-    streamMode: "updates",
+    configurable: { thread_id: threadId, checkpoint_ns: "", checkpoint_map: {}, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
+    streamMode: ["updates", "custom"],
     callbacks: [{ handleLLMError: async () => {
       await onModelUsage({ inputTokens: null, outputTokens: null, totalTokens: null,
         cachedInputTokens: null, reasoningOutputTokens: null });
@@ -143,9 +146,24 @@ export async function runTurn(
 
   let finalMessage: AIMessage | undefined;
   const usageMessageIds = new Set<string>();
+  const delegatedUsageIds = new Set<string>();
   const interrupts: Interrupt<CommandApproval>[] = [];
 
-  for await (const update of stream) {
+  for await (const [mode, update] of stream) {
+    if (mode === "custom") {
+      const frame = DelegationStreamSchema.safeParse(update);
+      if (!frame.success) continue;
+      if (frame.data.type === "delegation") {
+        await onEvent(frame.data);
+      } else {
+        const key = `${frame.data.taskId}:${frame.data.index}`;
+        if (!delegatedUsageIds.has(key)) {
+          delegatedUsageIds.add(key);
+          await onModelUsage(frame.data.usage);
+        }
+      }
+      continue;
+    }
     const pending = (update as Record<string, unknown>).__interrupt__ as
       | Interrupt<CommandApproval>[]
       | undefined;
@@ -268,7 +286,7 @@ export function startTurn(
 ): Promise<TurnResult> {
   return runTurn(
     agent,
-    { messages: [new HumanMessage(message)] },
+    { messages: [new HumanMessage({ id: randomUUID(), content: message })] },
     threadId,
     options,
   );

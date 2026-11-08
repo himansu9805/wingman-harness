@@ -13,3 +13,4 @@ export { shutdown } from "./shutdown";
 export { initializeRuntime, type CoreRuntime } from "./core/runtime";
 export type { AgentDefinition } from "./core/agents/definition";
 export type { AgentConfiguration, AgentModels } from "./core/agents/configuration";
+export type { DelegatedTask, DelegationEvent } from "./core/delegation/types";

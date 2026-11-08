@@ -1,3 +1,4 @@
+import { MemoryDelegationStore } from "../src/core/delegation/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
@@ -61,6 +62,7 @@ async function fixture({ definitions, globalTools = [], agentTools = {}, skills 
       async close() { trace.closed.push("mcp"); },
     }; },
     async loadSkills() { return skills; },
+    async openDelegations() { return new MemoryDelegationStore(); },
     async loadConfiguration() { return {
       definitions: definitions ?? [role("default", {}, "routed"), role("analyst")],
       globalTools, agentTools,
@@ -203,7 +205,7 @@ test("empty installed skill catalogue does not expose load_skill", async () => {
 test("default graph preserves production shell approval and resume", async () => {
   const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('phase2b')")}`;
   const { runtime, trace } = await fixture({
-    definitions: [createDefaultAgentDefinition()],
+    definitions: [createDefaultAgentDefinition(), analystAgentDefinition],
     globalTools: createLocalTools([]),
     respond(messages) {
       const result = messages.filter(ToolMessage.isInstance).at(-1);

@@ -5,8 +5,9 @@ import { MEMORY_TOOL_NAMES } from "../../tools/names";
 export type { AgentCapabilitiesCatalog } from "./catalogue";
 
 export type RegisteredAgentDefinition = Readonly<
-  Omit<AgentDefinition, "capabilities">
+  Omit<AgentDefinition, "capabilities" | "delegation">
 > & {
+  readonly delegation: { readonly agents: readonly string[]; readonly timeoutMs: number };
   readonly capabilities: {
     readonly useGlobalTools: readonly string[];
     readonly tools: readonly string[];
@@ -72,6 +73,12 @@ export class AgentRegistry {
     );
     this.validateSelection(definition.id, "skills", capabilities.skills);
     const selectedTools = [...capabilities.useGlobalTools, ...capabilities.tools];
+    if (definition.delegation.agents.length && !capabilities.tools.includes("delegate_task")) {
+      throw new Error(`Agent "${definition.id}" must select its private delegate_task tool`);
+    }
+    if (selectedTools.includes("delegate_task") && !definition.delegation.agents.length) {
+      throw new Error(`Agent "${definition.id}" has no permitted delegation targets`);
+    }
     for (const name of selectedTools) {
       if (MEMORY_TOOL_NAMES.has(name) && (
         capabilities.memory === "none" ||
@@ -111,6 +118,7 @@ export class AgentRegistry {
 
     const registered = Object.freeze({
       ...definition,
+      delegation: Object.freeze({ ...definition.delegation, agents: Object.freeze([...definition.delegation.agents]) }),
       capabilities: Object.freeze({
         ...capabilities,
         useGlobalTools: Object.freeze([...capabilities.useGlobalTools]),

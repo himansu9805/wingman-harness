@@ -11,6 +11,7 @@ export interface Message { id: string; role: 'user' | 'assistant'; text: string;
 export interface History { messages: Message[]; nextCursor: string | null }
 export interface Catalogue { threads: Thread[]; nextCursor: string | null }
 export type ThreadEvent = { runId: string; createdAt?: string } & (
+  | { type: 'delegation'; phase: 'started' | 'completed' | 'failed' | 'interrupted' | 'reused' | 'blocked'; taskId: string; agentId: string; conversationId: string; parentExecutionId: string; parentToolCallId: string }
   | { type: 'run'; metadata: RunMetadata }
   | { type: 'route'; choice: string; confidence: number; probabilities?: Record<string, number> }
   | { type: 'tool_call' | 'memory'; name: string; args: Record<string, unknown>; toolCallId?: string }
