@@ -41,7 +41,11 @@ export class AgentToolCatalogue {
   }
 
   /** Returns only selected global tools and selected tools owned by this agent. */
-  resolve(agentId: string, useGlobalTools: readonly string[], ownTools: readonly string[]): StructuredToolInterface[] {
+  resolve(
+    agentId: string,
+    useGlobalTools: readonly string[],
+    ownTools: readonly string[],
+  ): StructuredToolInterface[] {
     const selected = [
       ...selectTools(this.global, useGlobalTools, "global"),
       ...selectTools(this.agents.get(agentId) ?? new Map(), ownTools, `agent "${agentId}"`),
@@ -51,7 +55,9 @@ export class AgentToolCatalogue {
   }
 }
 
-function toolMap(tools: readonly StructuredToolInterface[]): ReadonlyMap<string, StructuredToolInterface> {
+function toolMap(
+  tools: readonly StructuredToolInterface[],
+): ReadonlyMap<string, StructuredToolInterface> {
   const result = new Map<string, StructuredToolInterface>();
   for (const tool of tools) {
     if (result.has(tool.name)) throw new Error(`Duplicate tool name "${tool.name}"`);
@@ -65,7 +71,7 @@ function selectTools(
   names: readonly string[],
   scope: string,
 ): StructuredToolInterface[] {
-  return names.map(name => {
+  return names.map((name) => {
     const tool = available.get(name);
     if (!tool) throw new Error(`Unknown ${scope} tool "${name}"`);
     return tool;

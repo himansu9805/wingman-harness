@@ -7,7 +7,11 @@ export type { AgentCapabilitiesCatalog } from "./catalogue";
 export type RegisteredAgentDefinition = Readonly<
   Omit<AgentDefinition, "capabilities" | "delegation">
 > & {
-  readonly delegation: { readonly agents: readonly string[]; readonly maxModelCalls: number; readonly timeoutMs: number };
+  readonly delegation: {
+    readonly agents: readonly string[];
+    readonly maxModelCalls: number;
+    readonly timeoutMs: number;
+  };
   readonly capabilities: {
     readonly useGlobalTools: readonly string[];
     readonly tools: readonly string[];
@@ -28,28 +32,34 @@ export class AgentRegistry {
     skills: ReadonlySet<string>;
   };
 
-  private readonly agents: ReadonlyMap<string, {
-    tools: ReadonlySet<string>;
-    mcpServers: ReadonlySet<string>;
-  }>;
+  private readonly agents: ReadonlyMap<
+    string,
+    {
+      tools: ReadonlySet<string>;
+      mcpServers: ReadonlySet<string>;
+    }
+  >;
 
   constructor(catalogue: AgentCapabilitiesCatalog) {
     this.available = {
       localTools: uniqueNames(catalogue.localTools, "local tools"),
       mcpServers: uniqueNames(
-        catalogue.mcpServers.map(id => McpServerIdSchema.parse(id)),
+        catalogue.mcpServers.map((id) => McpServerIdSchema.parse(id)),
         "MCP servers",
       ),
       skills: uniqueNames(catalogue.skills, "skills"),
     };
     this.agents = new Map(
-      Object.entries(catalogue.agents ?? {}).map(([id, own]) => [id, {
-        tools: uniqueNames(own.tools, `agent "${id}" tools`),
-        mcpServers: uniqueNames(
-          own.mcpServers.map(name => McpServerIdSchema.parse(name)),
-          `agent "${id}" MCP servers`,
-        ),
-      }]),
+      Object.entries(catalogue.agents ?? {}).map(([id, own]) => [
+        id,
+        {
+          tools: uniqueNames(own.tools, `agent "${id}" tools`),
+          mcpServers: uniqueNames(
+            own.mcpServers.map((name) => McpServerIdSchema.parse(name)),
+            `agent "${id}" MCP servers`,
+          ),
+        },
+      ]),
     );
   }
 
@@ -68,9 +78,7 @@ export class AgentRegistry {
 
     const { capabilities } = definition;
 
-    this.validateSelection(
-      definition.id, "localTools", capabilities.useGlobalTools,
-    );
+    this.validateSelection(definition.id, "localTools", capabilities.useGlobalTools);
     this.validateSelection(definition.id, "skills", capabilities.skills);
     const selectedTools = [...capabilities.useGlobalTools, ...capabilities.tools];
     if (definition.delegation.agents.length && !capabilities.tools.includes("delegate_task")) {
@@ -80,14 +88,20 @@ export class AgentRegistry {
       throw new Error(`Agent "${definition.id}" has no permitted delegation targets`);
     }
     for (const name of selectedTools) {
-      if (MEMORY_TOOL_NAMES.has(name) && (
-        capabilities.memory === "none" ||
-        (capabilities.memory === "read" && name !== "recall_memory")
-      )) {
-        throw new Error(`Agent "${definition.id}" cannot use "${name}" with memory policy "${capabilities.memory}"`);
+      if (
+        MEMORY_TOOL_NAMES.has(name) &&
+        (capabilities.memory === "none" ||
+          (capabilities.memory === "read" && name !== "recall_memory"))
+      ) {
+        throw new Error(
+          `Agent "${definition.id}" cannot use "${name}" with memory policy "${capabilities.memory}"`,
+        );
       }
     }
-    const hasSkills = capabilities.skills === "all" ? this.available.skills.size > 0 : capabilities.skills.length > 0;
+    const hasSkills =
+      capabilities.skills === "all"
+        ? this.available.skills.size > 0
+        : capabilities.skills.length > 0;
     if (hasSkills && !selectedTools.includes("load_skill")) {
       throw new Error(`Agent "${definition.id}" must select load_skill to use skills`);
     }
@@ -118,7 +132,10 @@ export class AgentRegistry {
 
     const registered = Object.freeze({
       ...definition,
-      delegation: Object.freeze({ ...definition.delegation, agents: Object.freeze([...definition.delegation.agents]) }),
+      delegation: Object.freeze({
+        ...definition.delegation,
+        agents: Object.freeze([...definition.delegation.agents]),
+      }),
       capabilities: Object.freeze({
         ...capabilities,
         useGlobalTools: Object.freeze([...capabilities.useGlobalTools]),
@@ -158,18 +175,13 @@ export class AgentRegistry {
 
     for (const name of selection) {
       if (!this.available[category].has(name)) {
-        throw new Error(
-          `Agent "${agentId}" references unknown ${category} capability "${name}"`,
-        );
+        throw new Error(`Agent "${agentId}" references unknown ${category} capability "${name}"`);
       }
     }
   }
 }
 
-function uniqueNames(
-  names: readonly string[],
-  category: string,
-): ReadonlySet<string> {
+function uniqueNames(names: readonly string[], category: string): ReadonlySet<string> {
   const unique = new Set(names);
 
   if (unique.size !== names.length) {
@@ -179,17 +191,17 @@ function uniqueNames(
   return unique;
 }
 
-function freezeSelection(
-  selection: "all" | string[],
-): "all" | readonly string[] {
+function freezeSelection(selection: "all" | string[]): "all" | readonly string[] {
   return selection === "all" ? selection : Object.freeze([...selection]);
 }
 
-function freezeGrants(
-  grants: readonly RegisteredMcpGrant[],
-): readonly RegisteredMcpGrant[] {
-  return Object.freeze(grants.map(grant => Object.freeze({
-    serverId: grant.serverId,
-    tools: grant.tools === "all" ? "all" : Object.freeze([...grant.tools]),
-  })));
+function freezeGrants(grants: readonly RegisteredMcpGrant[]): readonly RegisteredMcpGrant[] {
+  return Object.freeze(
+    grants.map((grant) =>
+      Object.freeze({
+        serverId: grant.serverId,
+        tools: grant.tools === "all" ? "all" : Object.freeze([...grant.tools]),
+      }),
+    ),
+  );
 }

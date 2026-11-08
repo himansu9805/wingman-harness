@@ -100,11 +100,18 @@ export class CoreRuntime {
     const agentTools = { ...configuration.agentTools };
     for (const definition of configuration.definitions) {
       if (!definition.delegation?.agents.length) continue;
-      const targets = configuration.definitions.filter(target => definition.delegation.agents.includes(target.id));
+      const targets = configuration.definitions.filter((target) =>
+        definition.delegation.agents.includes(target.id),
+      );
       agentTools[definition.id] = [
         ...(agentTools[definition.id] ?? []),
-        createDelegationTool((request, identity, invocation) => this.delegations.run(definition.id, request, identity, invocation),
-          (taskId, answers, invocation) => this.delegations.resume(definition.id, taskId, answers, invocation), targets),
+        createDelegationTool(
+          (request, identity, invocation) =>
+            this.delegations.run(definition.id, request, identity, invocation),
+          (taskId, answers, invocation) =>
+            this.delegations.resume(definition.id, taskId, answers, invocation),
+          targets,
+        ),
       ];
     }
     this.toolCatalogue = new AgentToolCatalogue(configuration.globalTools, agentTools);
@@ -112,24 +119,33 @@ export class CoreRuntime {
     this.agents = new AgentRegistry({
       localTools: this.toolCatalogue.globalNames(),
       mcpServers: mcp.serverIds,
-      skills: skills.map(skill => skill.name),
-      agents: Object.fromEntries(configuration.definitions.map(definition => [definition.id, {
-        tools: this.toolCatalogue.privateNames(definition.id),
-        mcpServers: mcp.privateServerIds(definition.id),
-      }])),
+      skills: skills.map((skill) => skill.name),
+      agents: Object.fromEntries(
+        configuration.definitions.map((definition) => [
+          definition.id,
+          {
+            tools: this.toolCatalogue.privateNames(definition.id),
+            mcpServers: mcp.privateServerIds(definition.id),
+          },
+        ]),
+      ),
     });
     for (const definition of configuration.definitions) this.agents.register(definition);
     // Every existing CLI/server entry point uses this agent unless given an ID.
     this.agents.get("default");
-    this.delegations = new DelegationRunner(this.agents, delegationStore,
+    this.delegations = new DelegationRunner(
+      this.agents,
+      delegationStore,
       async (id, middleware) => {
         const { Agent } = await import("./agent");
         return Agent.create(this, id, [middleware]);
       },
-      async id => {
-        if (!checkpoints.saver.deleteThread) throw new Error("Checkpointer cannot delete delegated state");
+      async (id) => {
+        if (!checkpoints.saver.deleteThread)
+          throw new Error("Checkpointer cannot delete delegated state");
         await checkpoints.saver.deleteThread(id);
-      });
+      },
+    );
     this.delegations.validateTargets();
   }
 
@@ -151,7 +167,9 @@ export class CoreRuntime {
     try {
       // Acquire sequentially so cleanup cannot race pending initialization.
       mcp = await dependencies.openMcp();
-      const skills = Object.freeze((await dependencies.loadSkills()).map(skill => Object.freeze({ ...skill })));
+      const skills = Object.freeze(
+        (await dependencies.loadSkills()).map((skill) => Object.freeze({ ...skill })),
+      );
       const configuration = await dependencies.loadConfiguration(skills);
       checkpoints = await dependencies.openCheckpointer();
       delegations = await dependencies.openDelegations();
@@ -201,7 +219,9 @@ export class CoreRuntime {
   /** Reads only metadata from this runtime's snapshot of installed skills. */
   readSkill = (skill: SkillMeta): Promise<string> => {
     if (this.closed) throw new Error("Agent runtime is closed");
-    const installed = this.skills.find(candidate => candidate.name === skill.name && candidate.path === skill.path);
+    const installed = this.skills.find(
+      (candidate) => candidate.name === skill.name && candidate.path === skill.path,
+    );
     if (!installed) throw new Error("Skill is not in the runtime catalogue");
     return this.dependencies.readSkill(installed);
   };

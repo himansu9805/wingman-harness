@@ -6,8 +6,17 @@ import { modelUsage, type ModelUsage } from "./usage";
 import { previewToolOutput } from "./tool-output";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { DelegationStreamSchema, type DelegationEvent, type DelegationActivity } from "./delegation/types";
-import { pendingApprovals, approvalAnswers, type NativeApproval, type PendingApproval } from "./approvals";
+import {
+  DelegationStreamSchema,
+  type DelegationEvent,
+  type DelegationActivity,
+} from "./delegation/types";
+import {
+  pendingApprovals,
+  approvalAnswers,
+  type NativeApproval,
+  type PendingApproval,
+} from "./approvals";
 export type { PendingApproval } from "./approvals";
 
 /** Routing state exists only on graphs configured with the router middleware. */
@@ -16,7 +25,6 @@ const routeSchema = z.object({
   confidence: z.number(),
   probabilities: z.record(z.string(), z.number()).optional(),
 });
-
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
@@ -71,10 +79,7 @@ export type TurnResult =
  * @param message The AI message containing tool calls.
  * @param onEvent Receives one event per tool call.
  */
-async function emitToolCalls(
-  message: AIMessage,
-  onEvent: TurnEventHandler,
-): Promise<void> {
+async function emitToolCalls(message: AIMessage, onEvent: TurnEventHandler): Promise<void> {
   for (const call of message.tool_calls ?? []) {
     const identity = call.id ? { toolCallId: call.id } : {};
 
@@ -100,10 +105,7 @@ async function emitToolCalls(
 }
 
 /** Reports a bounded preview without changing the model's tool result. */
-async function emitToolResults(
-  messages: unknown[],
-  onEvent: TurnEventHandler,
-): Promise<void> {
+async function emitToolResults(messages: unknown[], onEvent: TurnEventHandler): Promise<void> {
   for (const message of messages) {
     if (!ToolMessage.isInstance(message)) continue;
 
@@ -130,15 +132,37 @@ export async function runTurn(
   agent: Agent,
   input: TurnInput,
   threadId: string,
-  { signal, onEvent = async () => {}, onModelUsage = async () => {}, schedulerThreadId, delegatedTaskId }: TurnOptions,
+  {
+    signal,
+    onEvent = async () => {},
+    onModelUsage = async () => {},
+    schedulerThreadId,
+    delegatedTaskId,
+  }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
-    configurable: { thread_id: threadId, agent_id: agent.id, ...(delegatedTaskId ? { delegated_task_id: delegatedTaskId } : {}), checkpoint_ns: "", checkpoint_map: {}, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
+    configurable: {
+      thread_id: threadId,
+      agent_id: agent.id,
+      ...(delegatedTaskId ? { delegated_task_id: delegatedTaskId } : {}),
+      checkpoint_ns: "",
+      checkpoint_map: {},
+      ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}),
+    },
     streamMode: ["updates", "custom"],
-    callbacks: [{ handleLLMError: async () => {
-      await onModelUsage({ inputTokens: null, outputTokens: null, totalTokens: null,
-        cachedInputTokens: null, reasoningOutputTokens: null });
-    } }],
+    callbacks: [
+      {
+        handleLLMError: async () => {
+          await onModelUsage({
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            cachedInputTokens: null,
+            reasoningOutputTokens: null,
+          });
+        },
+      },
+    ],
     signal,
   });
 
@@ -171,9 +195,10 @@ export async function runTurn(
     }
 
     const routeUpdate = update["TypeSafeModelRouterMiddleware.before_agent"];
-    const route = routeUpdate && "modelRoute" in routeUpdate
-      ? routeSchema.safeParse(routeUpdate.modelRoute)
-      : undefined;
+    const route =
+      routeUpdate && "modelRoute" in routeUpdate
+        ? routeSchema.safeParse(routeUpdate.modelRoute)
+        : undefined;
     if (route?.success) {
       await onEvent({
         type: "route",
@@ -251,11 +276,7 @@ export async function runUntilDone(
  * @param threadId The conversation to clean up.
  * @param options Abort signal and event callback.
  */
-export async function declinePending(
-  agent: Agent,
-  threadId: string,
-  options: TurnOptions,
-) {
+export async function declinePending(agent: Agent, threadId: string, options: TurnOptions) {
   await agent.cancelDelegations(threadId);
   const pending = await getPendingApprovals(agent, threadId);
   if (pending.length === 0) {
@@ -264,12 +285,30 @@ export async function declinePending(
     const state = await agent.app.graph.getState({ configurable: { thread_id: threadId } });
     const messages: unknown[] = state.values?.messages ?? [];
     const lastModel = [...messages].reverse().find(AIMessage.isInstance);
-    const answered = new Set(messages.slice(lastModel ? messages.lastIndexOf(lastModel) + 1 : 0).filter(ToolMessage.isInstance).map(message => message.tool_call_id));
-    const missing = lastModel?.tool_calls?.filter(call => call.id && !answered.has(call.id)) ?? [];
-    if (missing.length) await agent.app.graph.updateState({ configurable: { thread_id: threadId } }, {
-      messages: missing.map(call => new ToolMessage({ tool_call_id: call.id!, name: call.name,
-        content: "Execution abandoned by a new user message; action was not replayed.", status: "error" })),
-    }, "tools");
+    const answered = new Set(
+      messages
+        .slice(lastModel ? messages.lastIndexOf(lastModel) + 1 : 0)
+        .filter(ToolMessage.isInstance)
+        .map((message) => message.tool_call_id),
+    );
+    const missing =
+      lastModel?.tool_calls?.filter((call) => call.id && !answered.has(call.id)) ?? [];
+    if (missing.length)
+      await agent.app.graph.updateState(
+        { configurable: { thread_id: threadId } },
+        {
+          messages: missing.map(
+            (call) =>
+              new ToolMessage({
+                tool_call_id: call.id!,
+                name: call.name,
+                content: "Execution abandoned by a new user message; action was not replayed.",
+                status: "error",
+              }),
+          ),
+        },
+        "tools",
+      );
     return;
   }
   const answers = Object.fromEntries(pending.map((p) => [p.id, false]));
@@ -278,13 +317,9 @@ export async function declinePending(
   while (result.kind === "paused") {
     options.signal.throwIfAborted();
     if (remainingRounds-- === 0) {
-      throw new Error(
-        "Approval cleanup exceeded 25 rounds; thread remains paused",
-      );
+      throw new Error("Approval cleanup exceeded 25 rounds; thread remains paused");
     }
-    const declines = Object.fromEntries(
-      result.approvals.map((approval) => [approval.id, false]),
-    );
+    const declines = Object.fromEntries(result.approvals.map((approval) => [approval.id, false]));
     result = await resumeTurn(agent, declines, threadId, options);
   }
 }
@@ -316,16 +351,24 @@ export async function resumeTurn(
   options: TurnOptions,
 ): Promise<TurnResult> {
   const interrupts = await nativeApprovals(agent, threadId);
-  return runTurn(agent, new Command({ resume: approvalAnswers(interrupts, answers) }), threadId, options);
+  return runTurn(
+    agent,
+    new Command({ resume: approvalAnswers(interrupts, answers) }),
+    threadId,
+    options,
+  );
 }
 
 /** Reads native checkpoint interrupts; public approval IDs are derived from these values. */
 async function nativeApprovals(agent: Agent, threadId: string): Promise<NativeApproval[]> {
   const state = await agent.app.graph.getState({ configurable: { thread_id: threadId } });
-  return state.tasks.flatMap(task => (task.interrupts ?? []) as NativeApproval[]);
+  return state.tasks.flatMap((task) => (task.interrupts ?? []) as NativeApproval[]);
 }
 
 /** Lists direct and delegated approvals with their owning execution metadata. */
-export async function getPendingApprovals(agent: Agent, threadId: string): Promise<PendingApproval[]> {
+export async function getPendingApprovals(
+  agent: Agent,
+  threadId: string,
+): Promise<PendingApproval[]> {
   return pendingApprovals(await nativeApprovals(agent, threadId));
 }

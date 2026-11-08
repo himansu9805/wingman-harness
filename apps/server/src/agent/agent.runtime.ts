@@ -9,18 +9,14 @@ export interface AgentRuntime {
   listTasks(
     limit: number,
     before?: string,
-  ): Promise<
-    Awaited<ReturnType<typeof import("@wingman/core/tasks").listTaskPage>>
-  >;
+  ): Promise<Awaited<ReturnType<typeof import("@wingman/core/tasks").listTaskPage>>>;
   scheduledThreadIds(ids: string[]): Promise<string[]>;
   cancelTask(id: string): Promise<boolean>;
   taskRuns(
     limit: number,
     jobId?: string,
     before?: string,
-  ): Promise<
-    Awaited<ReturnType<typeof import("@wingman/core/tasks").getTaskRunPage>>
-  >;
+  ): Promise<Awaited<ReturnType<typeof import("@wingman/core/tasks").getTaskRunPage>>>;
   close(): Promise<void>;
   startScheduler(dispatch: JobDispatcher): Promise<void>;
   stopScheduler(): Promise<void>;
@@ -41,11 +37,7 @@ export const agentRuntime: AgentRuntime = {
     return (await import("@wingman/core/tasks")).cancelTask(id);
   },
   async taskRuns(limit, jobId, before) {
-    return (await import("@wingman/core/tasks")).getTaskRunPage(
-      limit,
-      jobId,
-      before,
-    );
+    return (await import("@wingman/core/tasks")).getTaskRunPage(limit, jobId, before);
   },
   async create() {
     const { Agent, initializeRuntime } = await import("@wingman/core");

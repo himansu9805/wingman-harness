@@ -1,44 +1,72 @@
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { test } from 'node:test';
-import pg from 'pg';
-import threads from '../../dist/threads/thread.repository.js';
-import events from '../../dist/threads/thread-events.repository.js';
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { test } from "node:test";
+import pg from "pg";
+import threads from "../../dist/threads/thread.repository.js";
+import events from "../../dist/threads/thread-events.repository.js";
 const connectionString = process.env.TEST_POSTGRES_CONNECTION_STRING;
-if (!connectionString) throw new Error('Set TEST_POSTGRES_CONNECTION_STRING');
-test('Postgres events serialize concurrent writers, replay after reconnect, reject failed writes without gaps and cascade on deletion', { timeout: 30000 }, async t => {
-  const schema = `events_${randomUUID().replaceAll('-','')}`;
-  const admin = new pg.Pool({ connectionString });
-  const resources = [];
-  t.after(async () => { for (const r of resources) await r.close(); await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await admin.end(); });
-  await admin.query(`CREATE SCHEMA "${schema}"`);
-  const url = new URL(connectionString); url.searchParams.set('options', `-c search_path=${schema}`);
-  const catalogue = new threads.PostgresThreadRepository(url.toString()); resources.push(catalogue); await catalogue.init();
-  const first = new events.PostgresThreadEventsRepository(url.toString()); resources.push(first); await first.init(); await first.init();
-  const second = new events.PostgresThreadEventsRepository(url.toString()); resources.push(second); await second.init();
-  await catalogue.create('a'); await catalogue.create('b');
-  const run = randomUUID();
-  await Promise.all(Array.from({length:30}, (_,i) => (i%2?first:second).append('a',run,{type:'done',text:String(i)})));
-  assert.deepEqual((await first.listAfter('a','0',100)).map(e=>e.sequence),Array.from({length:30},(_,i)=>String(i+1)));
-  await assert.rejects(first.append('a','invalid-uuid',{type:'done',text:'bad'}));
-  assert.equal((await first.append('a',run,{type:'done',text:'last'})).sequence,'31');
-  await first.close();
-  assert.equal((await second.listAfter('a','29',100)).length,2);
-  assert.deepEqual(await second.listAfter('b','0',100),[]);
-  const later = randomUUID();
-  await second.append('a', run, { type: 'run', metadata: { status: 'running' } });
-  await second.append('a', run, { type: 'run', metadata: { status: 'paused' } });
-  await second.append('a', later, { type: 'run', metadata: { status: 'running' } });
-  await second.append('a', later, { type: 'run', metadata: { status: 'completed' } });
-  const reopened = new events.PostgresThreadEventsRepository(url.toString()); resources.push(reopened); await reopened.init();
-  const latest = await reopened.listRuns('a', undefined, 1);
-  assert.equal(latest[0].payload.metadata.status, 'completed');
-  const previous = await reopened.listRuns('a', latest[0].sequence, 10);
-  assert.equal(previous.length, 1);
-  assert.equal(previous[0].payload.metadata.status, 'paused');
-  assert.deepEqual(await reopened.listRuns('a', previous[0].sequence, 10), []);
-  assert.deepEqual(await reopened.listRuns('b', undefined, 10), []);
-  await catalogue.markDeleting('a'); await assert.rejects(second.append('a',run,{type:'done',text:'bad'}));
-  await catalogue.delete('a'); assert.deepEqual(await second.listAfter('a','0',100),[]);
-  assert.ok(await catalogue.get('b'));
-});
+if (!connectionString) throw new Error("Set TEST_POSTGRES_CONNECTION_STRING");
+test(
+  "Postgres events serialize concurrent writers, replay after reconnect, reject failed writes without gaps and cascade on deletion",
+  { timeout: 30000 },
+  async (t) => {
+    const schema = `events_${randomUUID().replaceAll("-", "")}`;
+    const admin = new pg.Pool({ connectionString });
+    const resources = [];
+    t.after(async () => {
+      for (const r of resources) await r.close();
+      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await admin.end();
+    });
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const url = new URL(connectionString);
+    url.searchParams.set("options", `-c search_path=${schema}`);
+    const catalogue = new threads.PostgresThreadRepository(url.toString());
+    resources.push(catalogue);
+    await catalogue.init();
+    const first = new events.PostgresThreadEventsRepository(url.toString());
+    resources.push(first);
+    await first.init();
+    await first.init();
+    const second = new events.PostgresThreadEventsRepository(url.toString());
+    resources.push(second);
+    await second.init();
+    await catalogue.create("a");
+    await catalogue.create("b");
+    const run = randomUUID();
+    await Promise.all(
+      Array.from({ length: 30 }, (_, i) =>
+        (i % 2 ? first : second).append("a", run, { type: "done", text: String(i) }),
+      ),
+    );
+    assert.deepEqual(
+      (await first.listAfter("a", "0", 100)).map((e) => e.sequence),
+      Array.from({ length: 30 }, (_, i) => String(i + 1)),
+    );
+    await assert.rejects(first.append("a", "invalid-uuid", { type: "done", text: "bad" }));
+    assert.equal((await first.append("a", run, { type: "done", text: "last" })).sequence, "31");
+    await first.close();
+    assert.equal((await second.listAfter("a", "29", 100)).length, 2);
+    assert.deepEqual(await second.listAfter("b", "0", 100), []);
+    const later = randomUUID();
+    await second.append("a", run, { type: "run", metadata: { status: "running" } });
+    await second.append("a", run, { type: "run", metadata: { status: "paused" } });
+    await second.append("a", later, { type: "run", metadata: { status: "running" } });
+    await second.append("a", later, { type: "run", metadata: { status: "completed" } });
+    const reopened = new events.PostgresThreadEventsRepository(url.toString());
+    resources.push(reopened);
+    await reopened.init();
+    const latest = await reopened.listRuns("a", undefined, 1);
+    assert.equal(latest[0].payload.metadata.status, "completed");
+    const previous = await reopened.listRuns("a", latest[0].sequence, 10);
+    assert.equal(previous.length, 1);
+    assert.equal(previous[0].payload.metadata.status, "paused");
+    assert.deepEqual(await reopened.listRuns("a", previous[0].sequence, 10), []);
+    assert.deepEqual(await reopened.listRuns("b", undefined, 10), []);
+    await catalogue.markDeleting("a");
+    await assert.rejects(second.append("a", run, { type: "done", text: "bad" }));
+    await catalogue.delete("a");
+    assert.deepEqual(await second.listAfter("a", "0", 100), []);
+    assert.ok(await catalogue.get("b"));
+  },
+);

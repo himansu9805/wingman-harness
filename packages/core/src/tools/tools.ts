@@ -14,7 +14,7 @@ export function createLoadSkillTool(
   skills: readonly SkillMeta[],
   loadContent: (skill: SkillMeta) => Promise<string> = loadSkillContent,
 ) {
-  const allowed = new Map(skills.map(skill => [skill.name, { ...skill }]));
+  const allowed = new Map(skills.map((skill) => [skill.name, { ...skill }]));
   return tool(
     async ({ name }) => {
       const skill = allowed.get(name);
@@ -38,9 +38,7 @@ export function createLoadSkillTool(
       schema: z.object({
         name: z
           .string()
-          .describe(
-            "A skill name copied exactly from the skills list, e.g. 'commit-message'.",
-          ),
+          .describe("A skill name copied exactly from the skills list, e.g. 'commit-message'."),
       }),
     },
   );

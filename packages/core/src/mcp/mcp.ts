@@ -26,12 +26,21 @@ export interface McpConnections {
 
 export type McpClientFactory = (serverId: string, configuration: unknown) => McpClient;
 
-const configSchema = z.object({
-  mcpServers: z.record(McpServerIdSchema, z.unknown()).default({}),
-  agents: z.record(McpServerIdSchema, z.object({
+const configSchema = z
+  .object({
     mcpServers: z.record(McpServerIdSchema, z.unknown()).default({}),
-  }).strict()).default({}),
-}).strict();
+    agents: z
+      .record(
+        McpServerIdSchema,
+        z
+          .object({
+            mcpServers: z.record(McpServerIdSchema, z.unknown()).default({}),
+          })
+          .strict(),
+      )
+      .default({}),
+  })
+  .strict();
 
 function createClient(serverId: string, configuration: unknown): McpClient {
   // The adapter constructor validates the transport configuration at this boundary.
@@ -66,7 +75,8 @@ export class McpConnectionManager implements McpConnections {
     private readonly clientFactory: McpClientFactory = createClient,
   ) {
     const parsed = configSchema.safeParse(configuration);
-    if (!parsed.success) throw new Error("Invalid MCP configuration; check server profiles and IDs");
+    if (!parsed.success)
+      throw new Error("Invalid MCP configuration; check server profiles and IDs");
     const profiles = new Map<string, unknown>();
     for (const [id, configuration] of Object.entries(parsed.data.mcpServers)) {
       profiles.set(`global__${id}`, configuration);
@@ -97,31 +107,36 @@ export class McpConnectionManager implements McpConnections {
     const global = McpGrantsSchema.parse(access.useGlobalMcpServers);
     const own = McpGrantsSchema.parse(access.mcp);
     const grants = [
-      ...global.map(grant => ({ ...grant, profileId: `global__${grant.serverId}` })),
-      ...own.map(grant => ({ ...grant, profileId: `agent__${agentId}__${grant.serverId}` })),
+      ...global.map((grant) => ({ ...grant, profileId: `global__${grant.serverId}` })),
+      ...own.map((grant) => ({ ...grant, profileId: `agent__${agentId}__${grant.serverId}` })),
     ];
     for (const grant of grants) {
       if (!this.profiles.has(grant.profileId)) {
-        throw new Error(`Unknown MCP server "${grant.serverId}" in requested scope for agent "${agentId}"`);
+        throw new Error(
+          `Unknown MCP server "${grant.serverId}" in requested scope for agent "${agentId}"`,
+        );
       }
     }
-    const selected = await Promise.all(grants.map(async grant => {
-      if (grant.tools !== "all" && grant.tools.length === 0) return [];
-      const tools = await this.loadProfile(grant.profileId);
-      if (grant.tools === "all") return [...tools.values()];
-      return grant.tools.map(name => {
-        const selected = tools.get(name);
-        if (!selected) throw new Error(`Unknown MCP tool "${name}" on server "${grant.serverId}"`);
-        return selected;
-      });
-    }));
+    const selected = await Promise.all(
+      grants.map(async (grant) => {
+        if (grant.tools !== "all" && grant.tools.length === 0) return [];
+        const tools = await this.loadProfile(grant.profileId);
+        if (grant.tools === "all") return [...tools.values()];
+        return grant.tools.map((name) => {
+          const selected = tools.get(name);
+          if (!selected)
+            throw new Error(`Unknown MCP tool "${name}" on server "${grant.serverId}"`);
+          return selected;
+        });
+      }),
+    );
     if (this.closing) throw new Error("MCP connections are closing");
     return selected.flat();
   }
 
   /** Waits for pending discovery, then attempts every opened client's cleanup once. */
   close(): Promise<void> {
-    return this.closing ??= this.closeClients();
+    return (this.closing ??= this.closeClients());
   }
 
   private loadProfile(serverId: string): Promise<ReadonlyMap<string, StructuredToolInterface>> {
@@ -149,7 +164,8 @@ export class McpConnectionManager implements McpConnections {
           throw new Error(`Invalid tool namespace from MCP server "${serverId}"`);
         }
         const name = tool.name.slice(prefix.length);
-        if (available.has(name)) throw new Error(`Duplicate MCP tool "${name}" on server "${serverId}"`);
+        if (available.has(name))
+          throw new Error(`Duplicate MCP tool "${name}" on server "${serverId}"`);
         available.set(name, tool);
       }
       return available;
@@ -159,16 +175,20 @@ export class McpConnectionManager implements McpConnections {
   }
 
   private async closeClients(): Promise<void> {
-    const results = await Promise.allSettled([...this.loaded].map(async ([serverId, profile]) => {
-      // Discovery failures must not prevent closing a partially opened client.
-      await profile.tools.catch(() => undefined);
-      try {
-        await profile.client.close();
-      } catch {
-        throw new Error(`Failed to close MCP server "${serverId}"`);
-      }
-    }));
-    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    const results = await Promise.allSettled(
+      [...this.loaded].map(async ([serverId, profile]) => {
+        // Discovery failures must not prevent closing a partially opened client.
+        await profile.tools.catch(() => undefined);
+        try {
+          await profile.client.close();
+        } catch {
+          throw new Error(`Failed to close MCP server "${serverId}"`);
+        }
+      }),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
     if (failures.length) throw new AggregateError(failures, "MCP connection cleanup failed");
   }
 }

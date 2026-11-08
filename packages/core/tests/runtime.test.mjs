@@ -2,11 +2,7 @@ import { MemoryDelegationStore } from "../src/core/delegation/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MemorySaver } from "@langchain/langgraph";
-import {
-  CoreRuntime,
-  initializeRuntime,
-  closeRuntime,
-} from "../src/core/runtime.ts";
+import { CoreRuntime, initializeRuntime, closeRuntime } from "../src/core/runtime.ts";
 
 function fixture({ closeMcp, ...overrides } = {}) {
   const calls = [];
@@ -17,9 +13,17 @@ function fixture({ closeMcp, ...overrides } = {}) {
       calls.push("tools");
       return {
         serverIds: [],
-        privateServerIds() { return []; },
-        async getTools() { return []; },
-        close: closeMcp ?? (async () => { calls.push("close tools"); }),
+        privateServerIds() {
+          return [];
+        },
+        async getTools() {
+          return [];
+        },
+        close:
+          closeMcp ??
+          (async () => {
+            calls.push("close tools");
+          }),
       };
     },
     async loadSkills() {
@@ -29,20 +33,30 @@ function fixture({ closeMcp, ...overrides } = {}) {
     async loadConfiguration(skills) {
       calls.push("configuration");
       const { createLocalTools } = await import("../src/tools/tools.ts");
-      const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } = await import("../src/core/agents/defaults.ts");
+      const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } =
+        await import("../src/core/agents/defaults.ts");
       const { fastModel, strongModel, modelRouter } = await import("../src/core/router.ts");
       return {
-        definitions: [createDefaultAgentDefinition(), analystAgentDefinition, operatorAgentDefinition],
+        definitions: [
+          createDefaultAgentDefinition(),
+          analystAgentDefinition,
+          operatorAgentDefinition,
+        ],
         globalTools: createLocalTools(skills),
         models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
       };
     },
-    async readSkill() { return "test content"; },
+    async readSkill() {
+      return "test content";
+    },
     async openDelegations() {
       calls.push("delegations");
       const store = new MemoryDelegationStore();
       const close = store.close.bind(store);
-      store.close = async () => { calls.push("close delegations"); await close(); };
+      store.close = async () => {
+        calls.push("close delegations");
+        await close();
+      };
       return store;
     },
     async openCheckpointer() {
@@ -96,7 +110,14 @@ test("shared resources close once in dependency order", async () => {
   assert.equal(runtime.close(), closing);
   await closing;
 
-  assert.deepEqual(calls, ["tools", "skills", "configuration", "checkpointer", "delegations", ...cleanupOrder]);
+  assert.deepEqual(calls, [
+    "tools",
+    "skills",
+    "configuration",
+    "checkpointer",
+    "delegations",
+    ...cleanupOrder,
+  ]);
   assert.throws(() => runtime.checkpointer, /closed/);
   assert.throws(() => runtime.getMemoryIndex(), /closed/);
 });
@@ -109,14 +130,11 @@ test("failed initialization releases acquired resources", async () => {
     },
   });
 
-  await assert.rejects(
-    CoreRuntime.create(dependencies),
-    (error) => error === failure,
-  );
+  await assert.rejects(CoreRuntime.create(dependencies), (error) => error === failure);
 
   assert.deepEqual(calls, [
     "tools",
-    ...cleanupOrder.filter((name) => !['close checkpointer', 'close delegations'].includes(name)),
+    ...cleanupOrder.filter((name) => !["close checkpointer", "close delegations"].includes(name)),
   ]);
 });
 
@@ -263,17 +281,35 @@ test("concurrent startup is shared and shutdown waits for it", async () => {
 test("registration failure releases the already acquired saver and MCP manager", async () => {
   const { calls, dependencies } = fixture();
   const load = dependencies.loadConfiguration;
-  dependencies.loadConfiguration = async skills => {
+  dependencies.loadConfiguration = async (skills) => {
     const configuration = await load(skills);
-    return { ...configuration, definitions: [...configuration.definitions, configuration.definitions[0]] };
+    return {
+      ...configuration,
+      definitions: [...configuration.definitions, configuration.definitions[0]],
+    };
   };
   await assert.rejects(CoreRuntime.create(dependencies), /already registered/);
-  assert.deepEqual(calls, ["tools", "skills", "configuration", "checkpointer", "delegations", ...cleanupOrder]);
+  assert.deepEqual(calls, [
+    "tools",
+    "skills",
+    "configuration",
+    "checkpointer",
+    "delegations",
+    ...cleanupOrder,
+  ]);
 });
 
 test("configuration failure releases MCP without opening a checkpoint store", async () => {
   const failure = new Error("configuration unavailable");
-  const { calls, dependencies } = fixture({ async loadConfiguration() { throw failure; } });
-  await assert.rejects(CoreRuntime.create(dependencies), error => error === failure);
-  assert.deepEqual(calls, ["tools", "skills", ...cleanupOrder.filter(name => !["close checkpointer", "close delegations"].includes(name))]);
+  const { calls, dependencies } = fixture({
+    async loadConfiguration() {
+      throw failure;
+    },
+  });
+  await assert.rejects(CoreRuntime.create(dependencies), (error) => error === failure);
+  assert.deepEqual(calls, [
+    "tools",
+    "skills",
+    ...cleanupOrder.filter((name) => !["close checkpointer", "close delegations"].includes(name)),
+  ]);
 });

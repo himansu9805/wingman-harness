@@ -32,10 +32,7 @@ export async function getThreadMessages(
     : [];
   // Duplicate unresolved IDs consume results FIFO. Only preceding calls qualify;
   // completed calls are removed so later turns cannot overwrite their results.
-  const unresolved = new Map<
-    string,
-    NonNullable<ConversationMessage["toolCalls"]>
-  >();
+  const unresolved = new Map<string, NonNullable<ConversationMessage["toolCalls"]>>();
 
   const messages: ConversationMessage[] = [];
   for (const [index, message] of originalMessages.entries()) {
@@ -78,10 +75,7 @@ export async function getThreadMessages(
 }
 
 /** Removes all saved state for a thread through the checkpointer's public API. */
-export async function deleteThreadState(
-  agent: Agent,
-  threadId: string,
-): Promise<void> {
+export async function deleteThreadState(agent: Agent, threadId: string): Promise<void> {
   const checkpointer = agent.app.graph.checkpointer;
   if (
     !checkpointer ||

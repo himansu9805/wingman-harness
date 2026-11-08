@@ -1,27 +1,54 @@
-import type { ThreadEvent, ToolCall } from '../api/types';
+import type { ThreadEvent, ToolCall } from "../api/types";
 
-export type RunPhase = 'idle' | 'running' | 'paused' | 'done' | 'error';
-export interface Activity { phase: RunPhase; runId?: string; events: ThreadEvent[] }
-export const emptyActivity: Activity = { phase: 'idle', events: [] };
+export type RunPhase = "idle" | "running" | "paused" | "done" | "error";
+export interface Activity {
+  phase: RunPhase;
+  runId?: string;
+  events: ThreadEvent[];
+}
+export const emptyActivity: Activity = { phase: "idle", events: [] };
 
 export function applyEvent(state: Activity, event: ThreadEvent): Activity {
-  const phase: RunPhase = event.type === 'run'
-    ? ({ running: 'running', paused: 'paused', completed: 'done', failed: 'error', interrupted: 'error' } as const)[event.metadata.status]
-    : event.type === 'approval' ? 'paused'
-    : event.type === 'done' ? 'done' : event.type === 'error' ? 'error' : 'running';
+  const phase: RunPhase =
+    event.type === "run"
+      ? (
+          {
+            running: "running",
+            paused: "paused",
+            completed: "done",
+            failed: "error",
+            interrupted: "error",
+          } as const
+        )[event.metadata.status]
+      : event.type === "approval"
+        ? "paused"
+        : event.type === "done"
+          ? "done"
+          : event.type === "error"
+            ? "error"
+            : "running";
   // A snapshot replaces the previous version; usage values are already cumulative.
-  const previous = event.type === 'run'
-    ? state.events.filter(item => item.type !== 'run' || item.runId !== event.runId)
-    : state.events;
+  const previous =
+    event.type === "run"
+      ? state.events.filter((item) => item.type !== "run" || item.runId !== event.runId)
+      : state.events;
   return { runId: event.runId, phase, events: [...previous, event].slice(-200) };
 }
 
 /** Tool IDs, rather than names or run IDs, connect results across approval resumes. */
 export function toolsWithResults(calls: ToolCall[], events: ThreadEvent[]): ToolCall[] {
-  return calls.map(call => {
+  return calls.map((call) => {
     if (call.result) return call;
-    const calledAt = events.findLastIndex(event => 'toolCallId' in event && event.toolCallId === call.id && event.type !== 'tool_result');
-    const result = events.findLast((event, index) => index > calledAt && event.type === 'tool_result' && event.toolCallId === call.id);
-    return result?.type === 'tool_result' ? { ...call, result: { output: result.output, truncated: result.truncated } } : call;
+    const calledAt = events.findLastIndex(
+      (event) =>
+        "toolCallId" in event && event.toolCallId === call.id && event.type !== "tool_result",
+    );
+    const result = events.findLast(
+      (event, index) =>
+        index > calledAt && event.type === "tool_result" && event.toolCallId === call.id,
+    );
+    return result?.type === "tool_result"
+      ? { ...call, result: { output: result.output, truncated: result.truncated } }
+      : call;
   });
 }

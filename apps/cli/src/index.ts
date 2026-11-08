@@ -52,9 +52,7 @@ async function printEvent(event: TurnEvent): Promise<void> {
       console.log(`  🧠 memory: ${event.name}(${JSON.stringify(event.args)})`);
       break;
     case "tool_call":
-      console.log(
-        `  🔧 tool called: ${event.name}(${JSON.stringify(event.args)})`,
-      );
+      console.log(`  🔧 tool called: ${event.name}(${JSON.stringify(event.args)})`);
       break;
     case "tool_result":
       console.log(
@@ -153,13 +151,7 @@ async function main() {
           `approval will be declined.`;
         const options = { signal: turnController.signal, onEvent: printEvent };
         await declinePending(agent, event.threadId, options);
-        const output = await runUntilDone(
-          agent,
-          message,
-          event.threadId,
-          declineAll,
-          options,
-        );
+        const output = await runUntilDone(agent, message, event.threadId, declineAll, options);
         console.log(`● ${output}\n`);
         await recordRun({
           ...event,
@@ -169,18 +161,14 @@ async function main() {
           finishedAt: new Date(),
         });
       } catch (err) {
-        const status = turnController?.signal.aborted
-          ? "interrupted"
-          : "failed";
+        const status = turnController?.signal.aborted ? "interrupted" : "failed";
         await recordRun({
           ...event,
           status,
           error: (err as Error).message,
           startedAt,
           finishedAt: new Date(),
-        }).catch((e) =>
-          console.warn(`[scheduler] Could not record run: ${e.message}`),
-        );
+        }).catch((e) => console.warn(`[scheduler] Could not record run: ${e.message}`));
         throw err;
       } finally {
         turnController = null;
@@ -211,13 +199,7 @@ async function main() {
           const { signal } = turnController;
           const options = { signal, onEvent: printEvent };
           await declinePending(agent, THREAD_ID, options);
-          const text = await runUntilDone(
-            agent,
-            input,
-            THREAD_ID,
-            askAtTerminal(signal),
-            options,
-          );
+          const text = await runUntilDone(agent, input, THREAD_ID, askAtTerminal(signal), options);
           console.log(`● ${text}\n`);
         } catch (err) {
           if (turnController.signal.aborted) {

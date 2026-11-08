@@ -16,7 +16,6 @@ const RULESET = {
   deny: ["rm *", "sudo *", "shutdown *", "reboot *", "kill *", "killall *"],
 };
 
-
 /** Catches shell constructs that shell-quote otherwise preserves as text. */
 function hasUnsupportedSyntax(command: string): boolean {
   let quote: "'" | '"' | null = null;

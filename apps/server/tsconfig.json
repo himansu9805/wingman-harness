@@ -6,7 +6,5 @@
     "emitDecoratorMetadata": true,
     "noEmit": true
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

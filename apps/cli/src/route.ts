@@ -7,9 +7,8 @@ export function formatRoute(event: Extract<TurnEvent, { type: "route" }>): strin
     return `${event.choice} — probabilities unavailable`;
   }
   const scores = probabilities.map(([name, probability]) => {
-    const percentage = probability > 0 && probability < 0.0001
-      ? "<0.01"
-      : (probability * 100).toFixed(2);
+    const percentage =
+      probability > 0 && probability < 0.0001 ? "<0.01" : (probability * 100).toFixed(2);
     return `${name}: ${percentage}%`;
   });
   return `${event.choice} — ${scores.join(", ")}`;

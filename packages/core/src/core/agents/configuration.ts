@@ -25,13 +25,20 @@ export interface AgentConfiguration {
  *
  * @param skills Snapshot of installed skills acquired by the owning runtime.
  */
-export async function loadAgentConfiguration(skills: readonly SkillMeta[]): Promise<AgentConfiguration> {
+export async function loadAgentConfiguration(
+  skills: readonly SkillMeta[],
+): Promise<AgentConfiguration> {
   const { createLocalTools } = await import("../../tools/tools");
   const { fastModel, strongModel, modelRouter } = await import("../router");
-  const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } = await import("./defaults");
+  const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } =
+    await import("./defaults");
   const { settings } = await import("../../settings");
   return {
-    definitions: [createDefaultAgentDefinition(settings.SCHEDULER_ENABLED), analystAgentDefinition, operatorAgentDefinition],
+    definitions: [
+      createDefaultAgentDefinition(settings.SCHEDULER_ENABLED),
+      analystAgentDefinition,
+      operatorAgentDefinition,
+    ],
     globalTools: createLocalTools(skills),
     models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
   };

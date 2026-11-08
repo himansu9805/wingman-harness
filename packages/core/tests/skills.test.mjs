@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { loadSkillContent, renderSkillIndex } from "../src/skills/skills.ts";
 import { createLoadSkillTool } from "../src/tools/tools.ts";
 
-test("scoped skill loader reads selected metadata and strips frontmatter", async t => {
+test("scoped skill loader reads selected metadata and strips frontmatter", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "wingman-skills-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "SKILL.md");
@@ -30,8 +30,13 @@ test("loading tool modules does not initialize the graph database", () => {
     const { createLocalTools } = await import(${JSON.stringify(tools)});
     createLocalTools([]);
   `;
-  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source], {
-    encoding: "utf8", timeout: 10_000,
-  });
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "-e", source],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
   assert.equal(result.status, 0, result.stderr);
 });

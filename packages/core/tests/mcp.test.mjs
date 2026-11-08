@@ -22,14 +22,19 @@ function fixture(overrides = {}) {
     return {
       async getTools() {
         if (overrides.discover) return overrides.discover(serverId);
-        return ["search", "write"].map(name => tool(async () => {
-          invoked.push({ serverId, name });
-          return serverId;
-        }, {
-          name: `mcp__${profileId}__${name}`,
-          description: `${name} on ${serverId}`,
-          schema: z.object({}),
-        }));
+        return ["search", "write"].map((name) =>
+          tool(
+            async () => {
+              invoked.push({ serverId, name });
+              return serverId;
+            },
+            {
+              name: `mcp__${profileId}__${name}`,
+              description: `${name} on ${serverId}`,
+              schema: z.object({}),
+            },
+          ),
+        );
       },
       async close() {
         closed.push(serverId);
@@ -37,10 +42,18 @@ function fixture(overrides = {}) {
       },
     };
   };
-  const manager = new McpConnectionManager({ mcpServers: {
-    docs: { url: "https://example.invalid/mcp", headers: { "X-Test-Identity": "docs" } },
-    "github-read": { url: "https://example.invalid/mcp", headers: { "X-Test-Identity": "github-read" } },
-  } }, factory);
+  const manager = new McpConnectionManager(
+    {
+      mcpServers: {
+        docs: { url: "https://example.invalid/mcp", headers: { "X-Test-Identity": "docs" } },
+        "github-read": {
+          url: "https://example.invalid/mcp",
+          headers: { "X-Test-Identity": "github-read" },
+        },
+      },
+    },
+    factory,
+  );
   return { manager, opened, closed, invoked };
 }
 
@@ -52,7 +65,10 @@ test("agent grants connect only selected profiles and expose only selected tools
     assert.deepEqual(opened, []);
     const tools = await getGlobalTools(manager, [{ serverId: "docs", tools: ["search"] }]);
     assert.deepEqual(opened, ["docs"]);
-    assert.deepEqual(tools.map(tool => tool.name), ["mcp__global__docs__search"]);
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["mcp__global__docs__search"],
+    );
     assert.equal(await tools[0].invoke({}), "docs");
     assert.deepEqual(invoked, [{ serverId: "docs", name: "search" }]);
   } finally {
@@ -67,8 +83,14 @@ test("concurrent agents share a profile without sharing their granted tool lists
     getGlobalTools(manager, [{ serverId: "docs", tools: ["write"] }]),
   ]);
   assert.deepEqual(opened, ["docs"]);
-  assert.deepEqual(first.map(tool => tool.name), ["mcp__global__docs__search"]);
-  assert.deepEqual(second.map(tool => tool.name), ["mcp__global__docs__write"]);
+  assert.deepEqual(
+    first.map((tool) => tool.name),
+    ["mcp__global__docs__search"],
+  );
+  assert.deepEqual(
+    second.map((tool) => tool.name),
+    ["mcp__global__docs__write"],
+  );
   first.length = 0;
   assert.equal(second.length, 1);
   const closing = manager.close();
@@ -85,46 +107,75 @@ test("separate profiles retain distinct clients and namespaces even for the same
     { serverId: "github-read", tools: ["search"] },
   ]);
   assert.deepEqual(opened, ["docs", "github-read"]);
-  assert.deepEqual(tools.map(tool => tool.name), ["mcp__global__docs__search", "mcp__global__github-read__search"]);
-  assert.deepEqual(await Promise.all(tools.map(tool => tool.invoke({}))), ["docs", "github-read"]);
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["mcp__global__docs__search", "mcp__global__github-read__search"],
+  );
+  assert.deepEqual(await Promise.all(tools.map((tool) => tool.invoke({}))), [
+    "docs",
+    "github-read",
+  ]);
   await manager.close();
   assert.deepEqual(closed, opened);
 });
 
 test("unknown servers and duplicate grants fail before opening any client", async () => {
   const { manager, opened } = fixture();
-  await assert.rejects(getGlobalTools(manager, [
-    { serverId: "docs", tools: "all" },
-    { serverId: "missing", tools: "all" },
-  ]), /Unknown MCP server/);
-  await assert.rejects(getGlobalTools(manager, [
-    { serverId: "docs", tools: "all" },
-    { serverId: "docs", tools: ["search"] },
-  ]), /MCP server grants must be unique/);
+  await assert.rejects(
+    getGlobalTools(manager, [
+      { serverId: "docs", tools: "all" },
+      { serverId: "missing", tools: "all" },
+    ]),
+    /Unknown MCP server/,
+  );
+  await assert.rejects(
+    getGlobalTools(manager, [
+      { serverId: "docs", tools: "all" },
+      { serverId: "docs", tools: ["search"] },
+    ]),
+    /MCP server grants must be unique/,
+  );
   assert.deepEqual(opened, []);
   await manager.close();
 });
 
 test("unknown tools do not fall back to a different profile", async () => {
   const { manager, opened } = fixture();
-  await assert.rejects(getGlobalTools(manager, [{ serverId: "docs", tools: ["missing"] }]), /Unknown MCP tool/);
+  await assert.rejects(
+    getGlobalTools(manager, [{ serverId: "docs", tools: ["missing"] }]),
+    /Unknown MCP tool/,
+  );
   assert.deepEqual(opened, ["docs"]);
   await manager.close();
 });
 
 test("duplicate tools and incorrect namespaces are rejected", async () => {
-  for (const names of [["mcp__global__docs__search", "mcp__global__docs__search"], ["mcp__global__github-read__search"]]) {
-    const { manager, closed } = fixture({ async discover() { return names.map(name => ({ name })); } });
-    await assert.rejects(getGlobalTools(manager, [{ serverId: "docs", tools: "all" }]), /Duplicate MCP tool|Invalid tool namespace/);
+  for (const names of [
+    ["mcp__global__docs__search", "mcp__global__docs__search"],
+    ["mcp__global__github-read__search"],
+  ]) {
+    const { manager, closed } = fixture({
+      async discover() {
+        return names.map((name) => ({ name }));
+      },
+    });
+    await assert.rejects(
+      getGlobalTools(manager, [{ serverId: "docs", tools: "all" }]),
+      /Duplicate MCP tool|Invalid tool namespace/,
+    );
     await manager.close();
     assert.deepEqual(closed, ["docs"]);
   }
 });
 
 test("failed discovery is retained and partially opened clients are still closed", async () => {
-  const { manager, opened, closed } = fixture({ async discover() { throw new Error("private credential"); } });
+  const { manager, opened, closed } = fixture({
+    async discover() {
+      throw new Error("private credential");
+    },
+  });
   for (let attempt = 0; attempt < 2; attempt++) {
-    await assert.rejects(getGlobalTools(manager, [{ serverId: "docs", tools: "all" }]), error => {
+    await assert.rejects(getGlobalTools(manager, [{ serverId: "docs", tools: "all" }]), (error) => {
       assert.equal(error.message, 'Failed to discover tools for MCP server "global__docs"');
       assert.equal(error.cause, undefined);
       return true;
@@ -137,17 +188,25 @@ test("failed discovery is retained and partially opened clients are still closed
 
 test("shutdown waits for discovery and attempts all clients even if cleanup fails", async () => {
   let release;
-  const gate = new Promise(resolve => { release = resolve; });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
   const { manager, closed } = fixture({
-    async discover() { await gate; return []; },
-    async close(serverId) { if (serverId === "docs") throw new Error("private credential"); },
+    async discover() {
+      await gate;
+      return [];
+    },
+    async close(serverId) {
+      if (serverId === "docs") throw new Error("private credential");
+    },
   });
   const discovery = getGlobalTools(manager, [
-    { serverId: "docs", tools: "all" }, { serverId: "github-read", tools: "all" },
+    { serverId: "docs", tools: "all" },
+    { serverId: "github-read", tools: "all" },
   ]);
   const rejectedDiscovery = assert.rejects(discovery, /closing/);
   const closing = manager.close();
-  const rejectedClose = assert.rejects(closing, error => {
+  const rejectedClose = assert.rejects(closing, (error) => {
     assert.equal(error.errors.length, 1);
     assert.equal(error.errors[0].message, 'Failed to close MCP server "global__docs"');
     return true;
@@ -163,14 +222,14 @@ test("connection configuration errors do not expose credentials", async () => {
   const manager = new McpConnectionManager({ mcpServers: { docs: {} } }, () => {
     throw new Error("private credential");
   });
-  await assert.rejects(getGlobalTools(manager, [{ serverId: "docs", tools: "all" }]), error => {
+  await assert.rejects(getGlobalTools(manager, [{ serverId: "docs", tools: "all" }]), (error) => {
     assert.equal(error.message, 'Invalid MCP connection configuration for server "global__docs"');
     return true;
   });
   await manager.close();
 });
 
-test("configuration files allow absence but reject invalid JSON and malformed profiles", async t => {
+test("configuration files allow absence but reject invalid JSON and malformed profiles", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "wingman-mcp-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "mcp.config.json");
@@ -179,10 +238,13 @@ test("configuration files allow absence but reject invalid JSON and malformed pr
   await empty.close();
   await writeFile(path, "{private credential");
   await assert.rejects(openMcpConnections(path), /contains invalid JSON/);
-  await writeFile(path, JSON.stringify({ mcpServers: { "invalid__id": {} } }));
+  await writeFile(path, JSON.stringify({ mcpServers: { invalid__id: {} } }));
   await assert.rejects(openMcpConnections(path), /Invalid MCP configuration/);
   const invalid = new McpConnectionManager({ mcpServers: { docs: { command: 7 } } });
-  await assert.rejects(getGlobalTools(invalid, [{ serverId: "docs", tools: "all" }]), /Invalid MCP connection configuration/);
+  await assert.rejects(
+    getGlobalTools(invalid, [{ serverId: "docs", tools: "all" }]),
+    /Invalid MCP connection configuration/,
+  );
   await invalid.close();
 });
 
@@ -209,15 +271,23 @@ test("installed adapter namespaces real stdio tools and routes calls to their ow
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
     });
   `;
-  const manager = new McpConnectionManager({ mcpServers: Object.fromEntries(
-    ["docs", "github-read"].map(id => [id, { command: process.execPath, args: ["-e", server, id] }]),
-  ) });
+  const manager = new McpConnectionManager({
+    mcpServers: Object.fromEntries(
+      ["docs", "github-read"].map((id) => [
+        id,
+        { command: process.execPath, args: ["-e", server, id] },
+      ]),
+    ),
+  });
   try {
     const tools = await getGlobalTools(manager, [
       { serverId: "docs", tools: ["search"] },
       { serverId: "github-read", tools: ["search"] },
     ]);
-    assert.deepEqual(tools.map(tool => tool.name), ["mcp__global__docs__search", "mcp__global__github-read__search"]);
+    assert.deepEqual(
+      tools.map((tool) => tool.name),
+      ["mcp__global__docs__search", "mcp__global__github-read__search"],
+    );
     assert.match(JSON.stringify(await tools[0].invoke({})), /called docs/);
     assert.match(JSON.stringify(await tools[1].invoke({})), /called github-read/);
   } finally {
@@ -228,26 +298,35 @@ test("installed adapter namespaces real stdio tools and routes calls to their ow
 test("global profiles are opt-in and shared, while agent profiles stay private", async () => {
   const opened = [];
   const closed = [];
-  const manager = new McpConnectionManager({
-    mcpServers: {
-      docs: { identity: "shared docs" },
-      search: { identity: "shared search" },
-    },
-    agents: {
-      developer: { mcpServers: { docs: { identity: "developer docs" } } },
-      researcher: { mcpServers: { search: { identity: "researcher search" } } },
-    },
-  }, (profileId, configuration) => {
-    opened.push(profileId);
-    return {
-      async getTools() {
-        return [tool(async () => configuration.identity, {
-          name: `mcp__${profileId}__fetch`, description: "Test fetch", schema: z.object({}),
-        })];
+  const manager = new McpConnectionManager(
+    {
+      mcpServers: {
+        docs: { identity: "shared docs" },
+        search: { identity: "shared search" },
       },
-      async close() { closed.push(profileId); },
-    };
-  });
+      agents: {
+        developer: { mcpServers: { docs: { identity: "developer docs" } } },
+        researcher: { mcpServers: { search: { identity: "researcher search" } } },
+      },
+    },
+    (profileId, configuration) => {
+      opened.push(profileId);
+      return {
+        async getTools() {
+          return [
+            tool(async () => configuration.identity, {
+              name: `mcp__${profileId}__fetch`,
+              description: "Test fetch",
+              schema: z.object({}),
+            }),
+          ];
+        },
+        async close() {
+          closed.push(profileId);
+        },
+      };
+    },
+  );
   try {
     const none = { useGlobalMcpServers: [], mcp: [] };
     assert.deepEqual(await manager.getTools("developer", none), []);
@@ -264,15 +343,30 @@ test("global profiles are opt-in and shared, while agent profiles stay private",
       mcp: [{ serverId: "search", tools: ["fetch"] }],
     });
     assert.equal(developer[0], researcher[0]);
-    assert.deepEqual(developer.map(tool => tool.name), [
-      "mcp__global__docs__fetch", "mcp__agent__developer__docs__fetch",
+    assert.deepEqual(
+      developer.map((tool) => tool.name),
+      ["mcp__global__docs__fetch", "mcp__agent__developer__docs__fetch"],
+    );
+    assert.deepEqual(await Promise.all(developer.map((tool) => tool.invoke({}))), [
+      "shared docs",
+      "developer docs",
     ]);
-    assert.deepEqual(await Promise.all(developer.map(tool => tool.invoke({}))), ["shared docs", "developer docs"]);
-    assert.deepEqual(await Promise.all(researcher.map(tool => tool.invoke({}))), ["shared docs", "researcher search"]);
-    await assert.rejects(manager.getTools("developer", {
-      useGlobalMcpServers: [], mcp: [{ serverId: "search", tools: "all" }],
-    }), /Unknown MCP server/);
-    assert.deepEqual(opened, ["global__docs", "agent__developer__docs", "agent__researcher__search"]);
+    assert.deepEqual(await Promise.all(researcher.map((tool) => tool.invoke({}))), [
+      "shared docs",
+      "researcher search",
+    ]);
+    await assert.rejects(
+      manager.getTools("developer", {
+        useGlobalMcpServers: [],
+        mcp: [{ serverId: "search", tools: "all" }],
+      }),
+      /Unknown MCP server/,
+    );
+    assert.deepEqual(opened, [
+      "global__docs",
+      "agent__developer__docs",
+      "agent__researcher__search",
+    ]);
     assert.ok(!opened.includes("global__search"));
   } finally {
     await manager.close();

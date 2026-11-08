@@ -15,18 +15,23 @@ async function buildAgentGraph(
   runtime.assertOpen();
   const capabilities = definition.capabilities;
   const selection = capabilities.skills;
-  const skills = selection === "all"
-    ? runtime.skills
-    : runtime.skills.filter(skill => selection.includes(skill.name));
-  const localTools = runtime.toolCatalogue.resolve(
-    definition.id, capabilities.useGlobalTools, capabilities.tools,
-  ).flatMap<StructuredToolInterface>(tool => tool.name === "load_skill"
-    ? (skills.length ? [createLoadSkillTool(skills, runtime.readSkill)] : [])
-    : [tool]);
+  const skills =
+    selection === "all"
+      ? runtime.skills
+      : runtime.skills.filter((skill) => selection.includes(skill.name));
+  const localTools = runtime.toolCatalogue
+    .resolve(definition.id, capabilities.useGlobalTools, capabilities.tools)
+    .flatMap<StructuredToolInterface>((tool) =>
+      tool.name === "load_skill"
+        ? skills.length
+          ? [createLoadSkillTool(skills, runtime.readSkill)]
+          : []
+        : [tool],
+    );
   const mcpTools = await runtime.mcp.getTools(definition.id, capabilities);
   runtime.assertOpen();
   const tools = [...localTools, ...mcpTools];
-  const toolNames = tools.map(tool => tool.name);
+  const toolNames = tools.map((tool) => tool.name);
   if (new Set(toolNames).size !== toolNames.length) {
     throw new Error(`Duplicate tools for agent "${definition.id}"`);
   }
@@ -38,14 +43,19 @@ async function buildAgentGraph(
     tools,
     checkpointer: runtime.checkpointer,
   };
-  const prompt = dynamicSystemPromptMiddleware(async () => buildSystemPrompt({
-    definition,
-    toolNames,
-    memoryIndex: capabilities.memory === "none" ? "" : await runtime.getMemoryIndex(),
-    skillIndex,
-  }));
+  const prompt = dynamicSystemPromptMiddleware(async () =>
+    buildSystemPrompt({
+      definition,
+      toolNames,
+      memoryIndex: capabilities.memory === "none" ? "" : await runtime.getMemoryIndex(),
+      skillIndex,
+    }),
+  );
   if (definition.model === "routed") {
-    return createAgent({ ...parameters, middleware: [runtime.models.routingMiddleware, prompt, ...execution] as const });
+    return createAgent({
+      ...parameters,
+      middleware: [runtime.models.routingMiddleware, prompt, ...execution] as const,
+    });
   }
   return createAgent({ ...parameters, middleware: [prompt, ...execution] as const });
 }
@@ -78,7 +88,11 @@ export class Agent {
    * @param execution Trusted worker middleware for durable budgets and tool outcomes.
    * @throws If the role is unknown, discovery fails, or shutdown has started.
    */
-  static async create(runtime: CoreRuntime, agentId = "default", execution: readonly AnyAgentMiddleware[] = []): Promise<Agent> {
+  static async create(
+    runtime: CoreRuntime,
+    agentId = "default",
+    execution: readonly AnyAgentMiddleware[] = [],
+  ): Promise<Agent> {
     runtime.assertOpen();
     const definition = runtime.agents.get(agentId);
     return new Agent(definition.id, await buildAgentGraph(runtime, definition, execution), runtime);

@@ -18,14 +18,16 @@ const toolSelection = z.union([
  * "all" opts into every discovered tool on that server; explicit lists are
  * checked against original server tool names, before namespace prefixes.
  */
-export const McpGrantSchema = z.object({
-  serverId: McpServerIdSchema,
-  tools: toolSelection,
-}).strict();
+export const McpGrantSchema = z
+  .object({
+    serverId: McpServerIdSchema,
+    tools: toolSelection,
+  })
+  .strict();
 
 /** A profile can appear once; an empty list grants no MCP access. */
 export const McpGrantsSchema = z.array(McpGrantSchema).superRefine((grants, context) => {
-  const ids = grants.map(grant => grant.serverId);
+  const ids = grants.map((grant) => grant.serverId);
   if (new Set(ids).size !== ids.length) {
     context.addIssue({ code: "custom", message: "MCP server grants must be unique" });
   }

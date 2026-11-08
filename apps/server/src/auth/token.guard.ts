@@ -22,8 +22,7 @@ export class TokenGuard implements CanActivate {
   }
 
   canActivate(context: ExecutionContext): boolean {
-    const header =
-      context.switchToHttp().getRequest<Request>().headers.authorization ?? "";
+    const header = context.switchToHttp().getRequest<Request>().headers.authorization ?? "";
     const given = header.startsWith("Bearer ") ? header.slice(7) : "";
     if (!timingSafeEqual(digest(given), this.expected)) {
       throw new UnauthorizedException("Missing or invalid API token");

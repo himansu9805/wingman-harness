@@ -8,7 +8,7 @@ describe("toArgv", () => {
     ["  git   status\t--short  ", ["git", "status", "--short"]],
     ['echo "hello world"', ["echo", "hello world"]],
     ["echo 'hello world'", ["echo", "hello world"]],
-    ['echo "" \'\'', ["echo", "", ""]],
+    ["echo \"\" ''", ["echo", "", ""]],
     ["echo hello\\ world", ["echo", "hello world"]],
     ['echo "a|b;c&&d>e*?"', ["echo", "a|b;c&&d>e*?"]],
     ["echo '*.ts'", ["echo", "*.ts"]],

@@ -8,8 +8,7 @@ import { fileURLToPath } from "node:url";
  * three levels up is the repo root either way.
  */
 const HOME =
-  process.env.WINGMAN_HOME ??
-  resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  process.env.WINGMAN_HOME ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 config({ path: join(HOME, ".env") });
 
@@ -60,9 +59,7 @@ class Settings {
       .map(([key]) => key);
 
     if (missing.length > 0) {
-      throw new Error(
-        `Missing required environment variables: ${missing.join(", ")}`,
-      );
+      throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
     }
 
     this.SKILLS_DIR = join(HOME, "skills");

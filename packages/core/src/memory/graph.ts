@@ -90,11 +90,7 @@ export class GraphMemory {
    * @param relation The relationship type or label.
    * @param toName The name of the target entity.
    */
-  async upsertRelation(
-    fromName: string,
-    relation: string,
-    toName: string,
-  ): Promise<void> {
+  async upsertRelation(fromName: string, relation: string, toName: string): Promise<void> {
     await this.run(
       `MATCH (a:Entity {name: $fromName}), (b:Entity {name: $toName})
       MERGE (a)-[r:RELATES_TO {relation: $relation}]->(b)`,
@@ -173,17 +169,13 @@ export class GraphMemory {
    * @param summary The summary of the conversation.
    * @param entityNames The names of entities associated with the conversation.
    */
-  async recordConversation(
-    summary: string,
-    entityNames: string[],
-  ): Promise<void> {
+  async recordConversation(summary: string, entityNames: string[]): Promise<void> {
     const conversationName = `conversation-${Date.now()}`;
     await this.upsertEntity(conversationName, "conversation", summary);
     for (const entityName of entityNames) {
-      const existing = await this.run(
-        `MATCH (e:Entity {name: $name}) RETURN e.name AS name`,
-        { name: entityName },
-      );
+      const existing = await this.run(`MATCH (e:Entity {name: $name}) RETURN e.name AS name`, {
+        name: entityName,
+      });
       if (existing.length === 0) {
         await this.upsertEntity(entityName, "topic", "");
       }

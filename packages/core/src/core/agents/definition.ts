@@ -24,20 +24,20 @@ export const AgentDefinitionSchema = z
   .object({
     id: z
       .string()
-      .regex(
-        /^[a-z][a-z0-9-]*$/,
-        "Agent IDs must use lowercase letters, digits and hyphens",
-      ),
+      .regex(/^[a-z][a-z0-9-]*$/, "Agent IDs must use lowercase letters, digits and hyphens"),
 
     description: z.string().trim().min(1),
     instructions: z.string().trim().min(1),
 
     model: z.enum(["routed", "fast", "powerful"]),
-    delegation: z.object({
-      agents: toolSelection.default([]),
-      maxModelCalls: z.number().int().min(1).max(100).default(8),
-      timeoutMs: z.number().int().min(1).max(120000).default(30000),
-    }).strict().default({ agents: [], timeoutMs: 30000, maxModelCalls: 8 }),
+    delegation: z
+      .object({
+        agents: toolSelection.default([]),
+        maxModelCalls: z.number().int().min(1).max(100).default(8),
+        timeoutMs: z.number().int().min(1).max(120000).default(30000),
+      })
+      .strict()
+      .default({ agents: [], timeoutMs: 30000, maxModelCalls: 8 }),
 
     capabilities: z
       .object({
