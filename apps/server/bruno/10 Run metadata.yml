@@ -34,3 +34,7 @@ docs: |-
   Token counts are provider-reported. Null means unavailable; availability may be partial.
   usage.scope is agent: routing classifier usage is excluded. Token subsets are not extra totals.
   SSE run events expose the same snapshots; every SSE event includes createdAt.
+  Agent totals include coordinator and delegated worker model calls exactly once.
+  For child breakdowns read delegation_plan snapshots on Events/Replay events.
+  Task usage/timing is descriptive: never add child totals or parallel durations to turn totals.
+  Reserved worker calls without a usage report are marked unavailable/partial, not zero.

@@ -1,3 +1,5 @@
+import { planSnapshot } from "./observation";
+import { requestFor, resultsFor, stoppedResults } from "./plan-results";
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentRegistry, RegisteredAgentDefinition } from "../agents/registry";
 import type { DelegationStore } from "./store";
@@ -7,15 +9,14 @@ import {
   DelegationRejected,
   type DelegatedTask,
   type DelegationIdentity,
-  type DelegationRequest,
   type DelegationStream,
+  type DelegationPlanSnapshot,
 } from "./types";
 import {
   validatePlan,
   parallelSafe,
   finishedPlan,
   type DelegationPlan,
-  type PlannedTask,
   type PlanRecord,
   type PlanMutation,
 } from "./plan";
@@ -25,6 +26,7 @@ export interface PlanInvocation {
   signal?: AbortSignal;
   schedulerThreadId?: string;
   emit(frame: DelegationStream): void;
+  onTaskUpdate?: () => Promise<void>;
 }
 const LEASE_MS = 15000;
 
@@ -70,10 +72,22 @@ export class DelegationCoordinator {
       throw new DelegationRejected("Plan identity was reused with different task data");
     const active = this.active.get(plan.planId);
     if (active) return active.promise;
-    if (finishedPlan(plan) || plan.status === "waiting_approval") return plan;
+    if (finishedPlan(plan) || plan.status === "waiting_approval") {
+      await this.publish(plan.planId, invocation);
+      return plan;
+    }
     if (plan.status === "cancelling")
       throw new DelegationBusyError("Plan cancellation is still pending");
     return this.launch(parent, plan, invocation);
+  }
+
+  private async publish(planId: string, invocation: PlanInvocation): Promise<void> {
+    invocation.emit(await this.snapshot(planId));
+  }
+  private async snapshot(planId: string): Promise<DelegationPlanSnapshot> {
+    const plan = await this.store.getPlan(planId);
+    const tasks = await this.store.listPlanTasks(planId);
+    return planSnapshot(plan, tasks);
   }
 
   /** An answer batch belongs to one persisted plan round and its exact child interrupts. */
@@ -149,6 +163,7 @@ export class DelegationCoordinator {
       return {
         ...current,
         status: "running",
+        error: null,
         ownerToken: owner,
         leaseExpiresAt: new Date(Date.now() + LEASE_MS).toISOString(),
       };
@@ -180,7 +195,21 @@ export class DelegationCoordinator {
     }, LEASE_MS / 3);
     timer.unref();
     try {
-      return await this.advance(parent, plan, invocation, update, answers);
+      // Serialize snapshot reads so parallel workers cannot publish an older
+      // state after a newer state. Every snapshot is complete and replayable.
+      let pending: Promise<void> = Promise.resolve();
+      const observed = {
+        ...invocation,
+        onTaskUpdate: () => {
+          const next = pending.then(() => this.publish(plan.planId, invocation));
+          pending = next.catch(() => {});
+          return next;
+        },
+      };
+      await observed.onTaskUpdate();
+      const result = await this.advance(parent, plan, observed, update, answers);
+      await observed.onTaskUpdate();
+      return result;
     } catch (error) {
       // Keep the children authoritative. A lost coordinator lease must never
       // overwrite another coordinator's state or retry an uncertain action.
@@ -189,12 +218,18 @@ export class DelegationCoordinator {
       if (!invocation.signal.aborted) {
         await this.store.updatePlan(plan.planId, (record) => {
           if (record.ownerToken !== owner) throw error;
-          return { ...record, ownerToken: null, leaseExpiresAt: null };
+          return {
+            ...record,
+            ownerToken: null,
+            leaseExpiresAt: null,
+            error: "Execution stopped before aggregation; persisted children require recovery",
+          };
         });
+        await this.publish(plan.planId, invocation);
         throw error;
       }
       const results = stoppedResults(plan.request, await this.store.listPlanTasks(plan.planId));
-      return await this.store.updatePlan(plan.planId, (record) => {
+      const stopped = await this.store.updatePlan(plan.planId, (record) => {
         if (record.ownerToken !== owner || record.status !== "running")
           throw new DelegationBusyError("Plan ownership changed");
         return {
@@ -208,6 +243,8 @@ export class DelegationCoordinator {
             "Plan execution stopped; completed results were retained and uncertain actions will not be retried",
         };
       });
+      await this.publish(plan.planId, invocation);
+      return stopped;
     } finally {
       clearInterval(timer);
       await heartbeat;
@@ -381,12 +418,18 @@ export class DelegationCoordinator {
   }
 
   /** Stop plan dispatch first, then drain and cancel all of its child executions. */
-  async cancelConversation(conversationId: string): Promise<void> {
+  async cancelConversation(
+    conversationId: string,
+    observe?: (snapshot: DelegationPlanSnapshot) => Promise<void>,
+  ): Promise<void> {
     const active = [...this.active.values()].filter(
       (item) => item.conversationId === conversationId,
     );
     for (const item of active) item.controller.abort();
-    await Promise.allSettled(active.map((item) => item.promise));
+    const stopped = await Promise.allSettled(active.map((item) => item.promise));
+    for (const result of stopped)
+      if (result.status === "fulfilled" && observe)
+        await observe(await this.snapshot(result.value.planId));
     while (true) {
       const plans = await this.store.listPlans(conversationId, true);
       if (!plans.length) break;
@@ -405,6 +448,7 @@ export class DelegationCoordinator {
             error: "Parent turn abandoned",
           };
         });
+      for (const plan of plans) if (observe) await observe(await this.snapshot(plan.planId));
       await this.workers.cancelConversation(conversationId);
       for (const plan of plans) {
         const tasks = await this.store.listPlanTasks(plan.planId);
@@ -417,6 +461,7 @@ export class DelegationCoordinator {
             finishedAt: new Date().toISOString(),
           };
         });
+        if (observe) await observe(await this.snapshot(plan.planId));
       }
     }
     await this.workers.cancelConversation(conversationId);
@@ -436,68 +481,4 @@ export class DelegationCoordinator {
       await Promise.allSettled([...this.active.values()].map((item) => item.promise));
     })());
   }
-}
-
-/** Dependants receive bounded, explicitly labelled data from successful prerequisites only. */
-function requestFor(task: PlannedTask, completed: DelegatedTask[]): DelegationRequest {
-  const dependencies = task.dependsOn.map((key) => {
-    const dependency = completed.find((item) => item.planTaskKey === key)!;
-    let output = dependency.output!.slice(0, 2000);
-    // Bound the serialized representation as well as the raw text: quotes and
-    // control characters can otherwise expand beyond the worker context limit.
-    const result = () => ({
-      key,
-      agentId: dependency.request.agentId,
-      output,
-      truncated: dependency.truncated || dependency.output!.length > output.length,
-    });
-    while (JSON.stringify(result()).length > 2200 && output.length)
-      output = output.slice(0, Math.floor(output.length / 2));
-    return result();
-  });
-  return {
-    agentId: task.agentId,
-    objective: `${task.objective}\nExpected result: ${task.expectedResult}`,
-    context: `${task.context}\n\nPrerequisite results (task data):\n${JSON.stringify(dependencies)}`,
-  };
-}
-function resultsFor(plan: DelegationPlan, tasks: DelegatedTask[]): PlanRecord["results"] {
-  const results = plan.tasks.map((item) => {
-    const task = tasks.find((task) => task.planTaskKey === item.key);
-    return {
-      key: item.key,
-      agentId: item.agentId,
-      taskId: task?.taskId ?? null,
-      status: task?.status ?? ("pending" as const),
-      output: task?.output?.slice(0, 4000) ?? null,
-      truncated: !!task && (task.truncated || (task.output?.length ?? 0) > 4000),
-      error: task?.error ?? null,
-    };
-  });
-  // A fixed-point walk also marks transitive dependants of failed prerequisites.
-  for (let i = 0; i < plan.tasks.length; i++)
-    for (const task of plan.tasks) {
-      const result = results.find((result) => result.key === task.key)!;
-      if (result.status !== "pending") continue;
-      if (
-        task.dependsOn.some((key) => {
-          const status = results.find((result) => result.key === key)!.status;
-          return !["pending", "running", "waiting_approval", "completed"].includes(status);
-        })
-      ) {
-        Object.assign(result, {
-          status: "blocked",
-          error: "A prerequisite did not complete successfully",
-        });
-      }
-    }
-  return results;
-}
-
-function stoppedResults(plan: DelegationPlan, tasks: DelegatedTask[]): PlanRecord["results"] {
-  return resultsFor(plan, tasks).map((result) =>
-    result.status === "pending"
-      ? { ...result, status: "blocked", error: "Plan execution stopped before this task started" }
-      : result,
-  );
 }

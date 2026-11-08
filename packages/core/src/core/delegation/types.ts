@@ -1,3 +1,4 @@
+import { TokenUsageSchema, ModelUsageSchema } from "../usage";
 import { z } from "zod";
 import type { StoredMessage } from "@langchain/core/messages";
 import { PendingApprovalSchema } from "../approvals";
@@ -11,13 +12,7 @@ export const DelegationRequestSchema = z
   })
   .strict();
 export type DelegationRequest = z.infer<typeof DelegationRequestSchema>;
-export const UsageSchema = z.object({
-  inputTokens: z.number().int().nonnegative().nullable(),
-  outputTokens: z.number().int().nonnegative().nullable(),
-  totalTokens: z.number().int().nonnegative().nullable(),
-  cachedInputTokens: z.number().int().nonnegative().nullable(),
-  reasoningOutputTokens: z.number().int().nonnegative().nullable(),
-});
+export const UsageSchema = ModelUsageSchema;
 const StoredToolSchema = z.custom<StoredMessage>((value) => {
   if (
     !value ||
@@ -152,9 +147,61 @@ export const DelegationActivitySchema = z.object({
   event: ActivitySchema,
 });
 export type DelegationActivity = z.infer<typeof DelegationActivitySchema>;
+/** Complete snapshots replace prior versions; their totals must never be accumulated. */
+export const PlanStatusSchema = z.enum([
+  "running",
+  "waiting_approval",
+  "completed",
+  "partial",
+  "failed",
+  "cancelling",
+  "cancelled",
+  "recovery_required",
+]);
+export const PlanTaskStatusSchema = z.union([
+  DelegatedTaskSchema.shape.status,
+  z.literal("pending"),
+  z.literal("blocked"),
+]);
+export const DelegationTaskSnapshotSchema = z.object({
+  key: z.string(),
+  agentId: z.string(),
+  taskId: z.string().uuid().nullable(),
+  objective: z.string(),
+  dependsOn: z.array(z.string()),
+  status: PlanTaskStatusSchema,
+  output: z.string().max(4000).nullable(),
+  truncated: z.boolean(),
+  error: z.string().nullable(),
+  toolCount: z.number().int().nonnegative(),
+  decisions: z.array(z.object({ toolCallId: z.string(), approved: z.boolean() })).max(32),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  elapsedMs: z.number().nonnegative(),
+  processingMs: z.number().nonnegative(),
+  approvalWaitMs: z.number().nonnegative(),
+  usage: TokenUsageSchema,
+});
+export const DelegationPlanSnapshotSchema = z.object({
+  type: z.literal("delegation_plan"),
+  planId: z.string().uuid(),
+  conversationId: z.string(),
+  parentExecutionId: z.string(),
+  parentToolCallId: z.string(),
+  status: PlanStatusSchema,
+  tasks: z.array(DelegationTaskSnapshotSchema).max(8),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  asOf: z.string(),
+  elapsedMs: z.number().nonnegative(),
+  error: z.string().nullable(),
+});
+export type DelegationTaskSnapshot = z.infer<typeof DelegationTaskSnapshotSchema>;
+export type DelegationPlanSnapshot = z.infer<typeof DelegationPlanSnapshotSchema>;
 export const DelegationStreamSchema = z.discriminatedUnion("type", [
   DelegationEventSchema,
   DelegationActivitySchema,
+  DelegationPlanSnapshotSchema,
   z.object({
     type: z.literal("delegation_usage"),
     taskId: z.string().uuid(),

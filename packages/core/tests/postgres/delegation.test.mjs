@@ -299,7 +299,9 @@ test(
           ];
     };
     const planned = await open(plannedWorker, undefined, planRequest);
+    const observed = [];
     const pausedPlanResult = await startTurn(planned.agent, "delegate", "durable-plan", {
+      onEvent: async (event) => observed.push(event),
       signal: AbortSignal.timeout(10000),
     });
     assert.equal(pausedPlanResult.kind, "paused");
@@ -318,7 +320,21 @@ test(
       reopened.agent,
       { [pausedPlanResult.approvals[0].id]: false },
       "durable-plan",
-      { signal: AbortSignal.timeout(10000) },
+      { signal: AbortSignal.timeout(10000), onEvent: async (event) => observed.push(event) },
+    );
+    const snapshots = observed.filter((event) => event.type === "delegation_plan");
+    assert.equal(snapshots.at(-1).planId, pausedPlan.planId);
+    assert.equal(snapshots.at(-1).status, "completed");
+    assert.equal(
+      snapshots.at(-1).tasks.reduce((sum, task) => sum + task.usage.modelCalls, 0),
+      4,
+    );
+    assert.deepEqual(
+      snapshots
+        .at(-1)
+        .tasks.find((task) => task.key === "inspect")
+        .decisions.map((item) => item.approved),
+      [false],
     );
     assert.equal(finalPlanResult.kind, "done");
     const finalPlan = await reopened.store.getPlan(pausedPlan.planId);

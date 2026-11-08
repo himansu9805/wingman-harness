@@ -1,3 +1,4 @@
+import type { TurnEventHandler } from "./turn";
 import { createAgent, dynamicSystemPromptMiddleware, type AnyAgentMiddleware } from "langchain";
 import { buildSystemPrompt } from "./prompt";
 import type { CoreRuntime } from "./runtime";
@@ -74,8 +75,8 @@ export class Agent {
   }
 
   /** Cancels unfinished workers before abandoning a parent turn. */
-  cancelDelegations(conversationId: string): Promise<void> {
-    return this.runtime.plans.cancelConversation(conversationId);
+  cancelDelegations(conversationId: string, onEvent?: TurnEventHandler): Promise<void> {
+    return this.runtime.plans.cancelConversation(conversationId, onEvent);
   }
 
   /**

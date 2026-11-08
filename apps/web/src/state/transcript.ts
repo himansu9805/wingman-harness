@@ -72,8 +72,23 @@ export function transcript(messages: Message[], events: ThreadEvent[]): Transcri
     if (match < 0) match = turns.length - 1;
     if (match >= 0) assignment.set(runId, match);
   }
+  // Cleanup of an abandoned plan can be journaled in the next message's run.
+  // Execution IDs assign those events to their actual originating user prompt.
+  const taskOwners = new Map<string, string>();
+  for (const event of events)
+    if (event.type === "delegation_plan") {
+      for (const task of event.tasks)
+        if (task.taskId) taskOwners.set(task.taskId, event.parentExecutionId);
+    }
   for (const event of events) {
-    const index = assignment.get(event.runId);
+    const owner =
+      "parentExecutionId" in event
+        ? event.parentExecutionId
+        : event.type === "agent_activity"
+          ? taskOwners.get(event.taskId)
+          : undefined;
+    const explicit = owner ? turns.findIndex((turn) => turn.user?.id === owner) : -1;
+    const index = explicit >= 0 ? explicit : assignment.get(event.runId);
     if (index !== undefined) turns[index].events.push(event);
   }
   return turns;
@@ -106,6 +121,7 @@ export function toolLabel(call: ToolCall): { name: string; target: string } {
     remember_memory: "Remember",
     store_memory: "Remember",
     load_skill: "Load skill",
+    delegate_task: "Delegate work",
   };
   const args = call.args ?? {};
   const target = [args.command, args.name, args.query].find((value) => typeof value === "string");

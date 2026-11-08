@@ -11,101 +11,111 @@ import tasksControllerModule from "../../../server/dist/tasks/tasks.controller.j
 import guardModule from "../../../server/dist/auth/token.guard.js";
 import repositoryModule from "../../../server/dist/threads/thread.repository.js";
 import eventsModule from "../../../server/dist/threads/thread-events.repository.js";
-import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { tool } from "@langchain/core/tools";
-import { MemorySaver, interrupt } from "@langchain/langgraph";
-import { createAgent } from "langchain";
+import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
-
-class DemoModel extends BaseChatModel {
-  _llmType() {
-    return "web-demo";
-  }
-  bindTools() {
-    return this;
-  }
-  async _generate(messages) {
-    const lastUser = messages.findLastIndex(HumanMessage.isInstance);
-    const text = messages[lastUser].text;
-    const results = messages.slice(lastUser + 1).filter(ToolMessage.isInstance);
-    const calls =
-      !results.length && text.startsWith("run")
-        ? [{ name: "exec_bash_command", args: { command: "uptime" }, id: `command-${lastUser}` }]
-        : !results.length && text === "recall memory"
-          ? [{ name: "recall_memory", args: { name: "Demo workspace" }, id: `memory-${lastUser}` }]
-          : [];
-    if (text === "run two" && !results.length)
-      calls.push({
-        name: "exec_bash_command",
-        args: { command: "pwd" },
-        id: `second-command-${lastUser}`,
-      });
-    const message = new AIMessage({
-      content: calls.length
-        ? ""
-        : results.length
-          ? results.map((result) => result.text).join(", ")
-          : text,
-      tool_calls: calls,
-      usage_metadata: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
-    });
-    return { generations: [{ text: message.text, message }] };
-  }
-}
-const command = tool(
-  async ({ command }) => {
-    const approved = interrupt({ kind: "bash_approval", command });
-    return approved === true ? "Demo uptime: 3 hours, 28 minutes." : "Command declined.";
+import { tsImport } from "tsx/esm/api";
+const { createDelegationRuntime } = await tsImport(
+  "../../../../tests/fixtures/delegation-runtime.mjs",
+  import.meta.url,
+);
+const { commandApproval } = await tsImport(
+  "../../../../packages/core/src/core/approvals.ts",
+  import.meta.url,
+);
+const demoCheck = tool(
+  async ({ command }, runtime) => {
+    const approved = interrupt(commandApproval(command, runtime));
+    return approved
+      ? `Demo result for ${command}: workspace checks passed.`
+      : `Declined demo command ${command}.`;
   },
   {
-    name: "exec_bash_command",
-    description: "Harmless demo command; never executes a process.",
+    name: "demo_check",
+    description: "Fictional workspace check; never executes a command",
     schema: z.object({ command: z.string() }),
   },
 );
-const recall = tool(async () => "Demo workspace uses TypeScript and React.", {
-  name: "recall_memory",
-  description: "Return fictional demo facts.",
-  schema: z.object({ name: z.string() }),
-});
-
-process.env.WINGMAN_API_TOKEN = "web-development-test-only";
-const agent = {
-  app: createAgent({
-    model: new DemoModel({}),
-    tools: [command, recall],
-    checkpointer: new MemorySaver(),
-  }),
+const plan = {
+  tasks: [
+    {
+      key: "research",
+      agentId: "analyst",
+      objective: "Research the workspace",
+      context: "Fictional TypeScript workspace",
+      expectedResult: "Findings",
+      dependsOn: [],
+    },
+    {
+      key: "compare",
+      agentId: "analyst",
+      objective: "Compare implementation options",
+      context: "Fictional project constraints",
+      expectedResult: "Comparison",
+      dependsOn: [],
+    },
+    {
+      key: "verify",
+      agentId: "operator",
+      objective: "Verify the findings",
+      context: "Use fictional demo checks only",
+      expectedResult: "Verification summary",
+      dependsOn: ["research", "compare"],
+    },
+  ],
 };
+const fixture = await createDelegationRuntime({
+  plan,
+  operatorTools: [demoCheck],
+  summarize: (result) => {
+    const plan = JSON.parse(result.text);
+    return plan.status === "completed"
+      ? "The workspace comparison is complete. TypeScript, NestJS and React remain a good fit. Verification respected your command decisions; see the delegated task results above."
+      : `Delegated work needs attention: ${plan.error ?? plan.status}`;
+  },
+  child: async (messages) => {
+    const input = JSON.parse(
+      messages.find(HumanMessage.isInstance).text.split("\n").slice(1).join("\n"),
+    );
+    if (input.agentId === "analyst") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return input.objective.startsWith("Research")
+        ? "The workspace uses TypeScript, NestJS and React."
+        : "Keep orchestration in core and share capabilities through explicit grants.";
+    }
+    const results = messages.filter(ToolMessage.isInstance);
+    return results.length
+      ? `Verification complete: ${results.map((result) => result.text).join(" ")}`
+      : [
+          { id: "demo-uptime", name: "demo_check", args: { command: "uptime" }, type: "tool_call" },
+          {
+            id: "demo-status",
+            name: "demo_check",
+            args: { command: "git status" },
+            type: "tool_call",
+          },
+        ];
+  },
+});
+process.env.WINGMAN_API_TOKEN = "web-development-test-only";
+const agent = fixture.agent;
 const store = new repositoryModule.MemoryThreadRepository();
 const journal = new eventsModule.MemoryThreadEventsRepository(store);
-const originalStream = agent.app.stream.bind(agent.app);
-agent.app.stream = async (input, options) => {
-  const request = input?.messages?.[0]?.text;
-  if (request === "slow") await new Promise((resolve) => setTimeout(resolve, 3_000));
-  if (request === "fail") throw new Error("Deterministic browser-test error");
-  return (async function* () {
-    yield {
-      "TypeSafeModelRouterMiddleware.before_agent": {
-        modelRoute: {
-          choice: "fast",
-          confidence: 0,
-          probabilities: { fast: 0.5153, powerful: 0.4847 },
-        },
-      },
-    };
-    yield* await originalStream(input, options);
-  })();
-};
 const taskIds = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
 await store.create("demo-schedule-origin");
 await store.touch("demo-schedule-origin", "Daily workspace checks");
 await store.create("demo-schedule-results");
 await store.touch("demo-schedule-results", "Scheduled workspace check");
-await agent.app.invoke(
-  { messages: [new HumanMessage("Demo scheduled task completed successfully.")] },
+await agent.app.graph.updateState(
   { configurable: { thread_id: "demo-schedule-results" } },
+  {
+    messages: [
+      new HumanMessage("Demo scheduled task completed successfully."),
+      new AIMessage("Workspace checks passed."),
+    ],
+  },
+  "model_request",
 );
 const demoTasks = new Map([
   [
@@ -185,7 +195,7 @@ Module({
           nextBefore: null,
         }),
         create: async () => agent,
-        close: async () => {},
+        close: async () => fixture.runtime.close(),
         startScheduler: async () => {},
         stopScheduler: async () => {},
         recordRun: async () => {},

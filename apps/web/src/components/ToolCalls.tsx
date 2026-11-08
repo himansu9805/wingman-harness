@@ -9,7 +9,15 @@ import type { ToolCall } from "../api/types";
 import { Hammer, ToolCase } from "lucide-react";
 import { Icon } from "@astryxdesign/core";
 
-export function ToolCalls({ calls, running }: { calls: ToolCall[]; running: boolean }) {
+export function ToolCalls({
+  calls,
+  running,
+  grouped = true,
+}: {
+  calls: ToolCall[];
+  running: boolean;
+  grouped?: boolean;
+}) {
   const items = calls.map((call) => ({
     key: call.id,
     ...toolLabel(call),
@@ -18,6 +26,7 @@ export function ToolCalls({ calls, running }: { calls: ToolCall[]; running: bool
       : running
         ? ("running" as const)
         : ("pending" as const),
+    stats: call.decision === false ? <Text type="supporting">Declined by user</Text> : undefined,
     resultDetail: call.result ? (
       <VStack gap={2}>
         <CodeBlock code={call.result.output} language="text" title={`${call.name} output`} />
@@ -25,6 +34,14 @@ export function ToolCalls({ calls, running }: { calls: ToolCall[]; running: bool
       </VStack>
     ) : undefined,
   }));
+  if (!grouped)
+    return (
+      <VStack gap={1}>
+        {items.map((item) => (
+          <ChatToolCalls key={item.key} xstyle={styles.calls} calls={[item]} />
+        ))}
+      </VStack>
+    );
   if (items.length <= 1) return <ChatToolCalls xstyle={styles.calls} calls={items} />;
   const complete = calls.filter((call) => call.result !== undefined).length;
   const label =

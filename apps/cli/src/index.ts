@@ -1,3 +1,4 @@
+import { DelegationReporter, TurnAccounting } from "./delegation";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,7 @@ import {
 /** One thread per CLI session; saved threads would otherwise grow forever. */
 const THREAD_ID = `cli-${randomUUID()}`;
 
+const delegationReporter = new DelegationReporter((line) => console.log(line));
 let turnQueue: Promise<unknown> = Promise.resolve();
 
 /** Runs turns one at a time, in the order they arrive. */
@@ -35,7 +37,11 @@ function enqueueTurn<T>(fn: () => Promise<T>): Promise<T> {
  */
 async function printEvent(event: TurnEvent): Promise<void> {
   switch (event.type) {
+    case "delegation_plan":
+      delegationReporter.update(event);
+      break;
     case "delegation":
+      if (event.planId) break;
       console.log(`  🤝 ${event.agentId}: ${event.phase} [${event.taskId}]`);
       break;
     case "agent_activity":
@@ -120,7 +126,7 @@ async function main() {
     (signal: AbortSignal): Decide =>
     async ({ command, execution }) => {
       const answer = await rl.question(
-        ` ▶️ [${execution.agentId}] Execute command: "${command}"? [y/N]: `,
+        ` ▶️ [${delegationReporter.owner(execution.taskId, execution.agentId)}] Execute command: "${command}"? [y/N]: `,
         { signal },
       );
       return ["y", "yes"].includes(answer.trim().toLowerCase());
@@ -136,6 +142,7 @@ async function main() {
       console.log(`⏰ scheduled task ${event.jobId}: ${event.prompt}`);
       turnController = new AbortController();
       const startedAt = new Date();
+      const accounting = new TurnAccounting();
       try {
         // Without this framing, a firing "remind me…" prompt reads like a new
         // request: the model schedules or lists tasks instead of doing it.
@@ -149,9 +156,15 @@ async function main() {
           `action you can't do in your reply. Don't schedule, list or cancel ` +
           `tasks. Nobody may be at the keyboard, so commands that need ` +
           `approval will be declined.`;
-        const options = { signal: turnController.signal, onEvent: printEvent };
+        const options = accounting.options(turnController.signal, printEvent);
         await declinePending(agent, event.threadId, options);
-        const output = await runUntilDone(agent, message, event.threadId, declineAll, options);
+        const output = await runUntilDone(
+          agent,
+          message,
+          event.threadId,
+          accounting.decide(declineAll),
+          options,
+        );
         console.log(`● ${output}\n`);
         await recordRun({
           ...event,
@@ -171,6 +184,7 @@ async function main() {
         }).catch((e) => console.warn(`[scheduler] Could not record run: ${e.message}`));
         throw err;
       } finally {
+        console.log(accounting.summary());
         turnController = null;
         if (atPrompt) rl.prompt(true); // redraw "> " and whatever was typed
       }
@@ -195,11 +209,18 @@ async function main() {
 
       await enqueueTurn(async () => {
         turnController = new AbortController();
+        const accounting = new TurnAccounting();
         try {
           const { signal } = turnController;
-          const options = { signal, onEvent: printEvent };
+          const options = accounting.options(signal, printEvent);
           await declinePending(agent, THREAD_ID, options);
-          const text = await runUntilDone(agent, input, THREAD_ID, askAtTerminal(signal), options);
+          const text = await runUntilDone(
+            agent,
+            input,
+            THREAD_ID,
+            accounting.decide(askAtTerminal(signal)),
+            options,
+          );
           console.log(`● ${text}\n`);
         } catch (err) {
           if (turnController.signal.aborted) {
@@ -208,6 +229,7 @@ async function main() {
             console.log(`● [turn failed: ${(err as Error).message}]\n`);
           }
         } finally {
+          console.log(accounting.summary());
           turnController = null;
         }
       });

@@ -1,3 +1,4 @@
+import type { DelegationPlanSnapshot } from "./delegation";
 import type { RunMetadata } from "./run-metadata";
 
 export interface Connection {
@@ -22,6 +23,7 @@ export interface ToolCall {
   name: string;
   args: Record<string, unknown>;
   result?: { output: string; truncated: boolean };
+  decision?: boolean;
 }
 export interface Message {
   id: string;
@@ -38,6 +40,7 @@ export interface Catalogue {
   nextCursor: string | null;
 }
 export type ThreadEvent = { runId: string; createdAt?: string } & (
+  | DelegationPlanSnapshot
   | {
       type: "delegation";
       planId: string | null;

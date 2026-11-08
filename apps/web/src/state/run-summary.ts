@@ -50,7 +50,7 @@ export function usageDetails(run: RunMetadata): string {
   return [
     `Input: ${count(usage.inputTokens)} · Output: ${count(usage.outputTokens)}`,
     `Cached input: ${count(usage.cachedInputTokens)} · Reasoning output: ${count(usage.reasoningOutputTokens)} (subsets)`,
-    `${usage.modelCalls} model calls · ${usage.availability} usage. Agent calls only; routing classifier excluded.`,
+    `${usage.modelCalls} model calls · ${usage.availability} usage. Includes coordinator and delegated workers; routing classifier excluded. Task breakdowns are included in this total.`,
     run.turn.completedAt ? `Finished: ${run.turn.completedAt}` : "This turn has not completed.",
   ].join("\n");
 }

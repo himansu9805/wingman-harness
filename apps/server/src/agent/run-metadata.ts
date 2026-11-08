@@ -1,12 +1,6 @@
-import type { ModelUsage } from "@wingman/core/turns";
+import { addUsage, emptyUsage, type TokenUsage } from "@wingman/core/turns";
+export { addUsage, emptyUsage, type TokenUsage } from "@wingman/core/turns";
 
-export interface TokenUsage extends ModelUsage {
-  scope: "agent";
-  modelCalls: number;
-  reportedCalls: number;
-  missingCalls: number;
-  availability: "complete" | "partial" | "unavailable";
-}
 export type RunStatus = "running" | "paused" | "completed" | "failed" | "interrupted";
 export interface RunMetadata {
   runId: string;
@@ -29,51 +23,6 @@ export interface RunMetadata {
     usage: TokenUsage;
   };
 }
-const fields = [
-  "inputTokens",
-  "outputTokens",
-  "totalTokens",
-  "cachedInputTokens",
-  "reasoningOutputTokens",
-] as const;
-export function emptyUsage(): TokenUsage {
-  return {
-    scope: "agent",
-    modelCalls: 0,
-    reportedCalls: 0,
-    missingCalls: 0,
-    availability: "unavailable",
-    inputTokens: null,
-    outputTokens: null,
-    totalTokens: null,
-    cachedInputTokens: null,
-    reasoningOutputTokens: null,
-  };
-}
-export function addUsage(total: TokenUsage, next: ModelUsage | TokenUsage): TokenUsage {
-  const aggregate = "modelCalls" in next;
-  const reported = [next.inputTokens, next.outputTokens, next.totalTokens].some(
-    (value) => value !== null,
-  );
-  const complete = [next.inputTokens, next.outputTokens, next.totalTokens].every(
-    (value) => value !== null,
-  );
-  const result = {
-    ...total,
-    modelCalls: total.modelCalls + (aggregate ? next.modelCalls : 1),
-    reportedCalls: total.reportedCalls + (aggregate ? next.reportedCalls : Number(reported)),
-    missingCalls: total.missingCalls + (aggregate ? next.missingCalls : Number(!complete)),
-  };
-  for (const field of fields)
-    result[field] =
-      total[field] === null && next[field] === null
-        ? null
-        : (total[field] ?? 0) + (next[field] ?? 0);
-  result.availability =
-    result.reportedCalls === 0 ? "unavailable" : result.missingCalls > 0 ? "partial" : "complete";
-  return result;
-}
-
 /** The event journal is authoritative; resume correlation survives process restarts. */
 export function startMetadata(
   runId: string,

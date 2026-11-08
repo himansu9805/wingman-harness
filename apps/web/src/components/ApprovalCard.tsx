@@ -1,3 +1,5 @@
+import { delegatedPlans } from "../state/delegation";
+import type { ThreadEvent } from "../api/types";
 import { useState } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
@@ -10,11 +12,18 @@ export function ApprovalCard({
   approvals,
   busy,
   submit,
+  events = [],
 }: {
+  events?: ThreadEvent[];
   approvals: Approval[];
   busy: boolean;
   submit: (answers: Record<string, boolean>) => Promise<void>;
 }) {
+  const tasks = delegatedPlans(events).flatMap((plan) => plan.tasks);
+  const owner = (approval: Approval) => {
+    const task = tasks.find((task) => task.taskId === approval.execution.taskId);
+    return task ? `${task.key} · ${task.agentId}` : approval.execution.agentId;
+  };
   const [answers, setAnswers] = useState<Record<string, boolean>>({});
   const choose = (id: string, approved: boolean) => {
     if (approvals.length === 1) void submit({ [id]: approved });
@@ -32,7 +41,7 @@ export function ApprovalCard({
           <VStack key={approval.id} gap={2}>
             <CodeBlock
               language="bash"
-              title={`${approval.execution.agentId} · Command ${index + 1}`}
+              title={`${owner(approval)} · Command ${index + 1}`}
               code={approval.command}
             />
             <HStack gap={2} wrap="wrap">

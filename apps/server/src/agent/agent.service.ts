@@ -17,6 +17,7 @@ import {
   type OnModuleInit,
 } from "@nestjs/common";
 import {
+  DelegatedUsageTracker,
   declinePending,
   getPendingApprovals,
   getThreadMessages,
@@ -223,6 +224,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     const metadata = startMetadata(runId, origin, now, previous);
     const started = performance.now();
     let usage = emptyUsage();
+    const delegated = new DelegatedUsageTracker();
     await this.events.append(threadId, runId, { type: "run", metadata });
     const finish = async (status: Parameters<typeof finishMetadata>[1]) => {
       const finished = finishMetadata(
@@ -230,7 +232,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
         status,
         new Date(),
         Math.max(0, Math.round(performance.now() - started)),
-        usage,
+        status === "running" ? usage : delegated.finish(usage),
       );
       await this.events.append(threadId, runId, { type: "run", metadata: finished });
     };
@@ -238,11 +240,13 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       const result = await run({
         signal,
         schedulerThreadId: threadId,
-        onModelUsage: async (counts) => {
+        onModelUsage: async (counts, _messageId, source) => {
+          if (source) delegated.report(source.taskId);
           usage = addUsage(usage, counts);
           await finish("running");
         },
         onEvent: async (payload) => {
+          if (payload.type === "delegation_plan") delegated.observe(payload);
           await this.events.append(threadId, runId, payload);
         },
       });

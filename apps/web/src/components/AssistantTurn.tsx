@@ -1,3 +1,5 @@
+import { delegatedPlans } from "../state/delegation";
+import { DelegatedWork } from "./DelegatedWork";
 import { ChatMessage, ChatMessageBubble } from "@astryxdesign/core/Chat";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
@@ -26,7 +28,9 @@ export function AssistantTurn({
   const running = current && model.activity.phase === "running";
   const route = turn.events.findLast((event) => event.type === "route");
   const scheduled = turn.events.find((event) => event.type === "scheduled");
-  const calls = liveCalls(turn);
+  const delegatedCalls = new Set(delegatedPlans(turn.events).map((plan) => plan.parentToolCallId));
+  const visibleCall = (call: import("../api/types").ToolCall) => !delegatedCalls.has(call.id);
+  const calls = liveCalls(turn).filter(visibleCall);
   const metadata = latestRun(turn);
   const approvals = current ? model.pending : [];
   if (!turn.messages.length && !turn.events.length && !approvals.length && !running) return null;
@@ -61,11 +65,12 @@ export function AssistantTurn({
               </Text>
             </HStack>
           )}
+          <DelegatedWork events={turn.events} />
           {turn.messages.map((message) => (
             <VStack key={message.id} gap={3}>
-              {message.toolCalls?.length ? (
+              {message.toolCalls?.some(visibleCall) ? (
                 <ToolCalls
-                  calls={toolsWithResults(message.toolCalls, turn.events)}
+                  calls={toolsWithResults(message.toolCalls.filter(visibleCall), turn.events)}
                   running={running}
                 />
               ) : null}
@@ -83,6 +88,7 @@ export function AssistantTurn({
             <ApprovalCard
               key={approvals.map((a) => a.id).join(",")}
               approvals={approvals}
+              events={turn.events}
               busy={model.working || model.loading}
               submit={model.resume}
             />

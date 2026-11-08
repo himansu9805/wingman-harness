@@ -23,3 +23,9 @@ docs: |-
   The connection stays open after done/approval/error; stop it manually.
   Use Pending to capture approvalId before Approve or Deny.
   Use Replay events with the last received id to reconnect.
+  delegation events identify the plan, task key, agent and internal task execution.
+  agent_activity wraps child tool events; scope toolCallId by taskId, not tool name.
+  delegation_plan is a complete bounded snapshot: replace the previous planId snapshot.
+  Snapshots include every task, including pending/blocked tasks, results and per-child usage/timing.
+  run.metadata.turn.usage already includes workers: do not add task totals to it.
+  Parallel worker durations overlap. Use plan.elapsedMs or run turn timing as wall time.

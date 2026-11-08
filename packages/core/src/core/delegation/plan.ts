@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PendingApprovalSchema } from "../approvals";
-import { DelegatedTaskSchema, DelegationRejected } from "./types";
+import { PlanStatusSchema, PlanTaskStatusSchema, DelegationRejected } from "./types";
 import type { RegisteredAgentDefinition, AgentRegistry } from "../agents/registry";
 
 const TaskKey = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
@@ -24,7 +24,7 @@ const PlanResultSchema = z.object({
   key: TaskKey,
   agentId: z.string(),
   taskId: z.string().uuid().nullable(),
-  status: z.union([DelegatedTaskSchema.shape.status, z.literal("pending"), z.literal("blocked")]),
+  status: PlanTaskStatusSchema,
   output: z.string().max(4000).nullable(),
   truncated: z.boolean(),
   error: z.string().nullable(),
@@ -38,16 +38,7 @@ export const PlanRecordSchema = z.object({
   requestHash: z.string(),
   request: DelegationPlanSchema,
   schedulerThreadId: z.string().nullable(),
-  status: z.enum([
-    "running",
-    "waiting_approval",
-    "completed",
-    "partial",
-    "failed",
-    "cancelling",
-    "cancelled",
-    "recovery_required",
-  ]),
+  status: PlanStatusSchema,
   version: z.number().int().nonnegative(),
   ownerToken: z.string().uuid().nullable(),
   leaseExpiresAt: z.string().nullable(),

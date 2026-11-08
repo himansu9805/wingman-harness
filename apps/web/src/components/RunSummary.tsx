@@ -9,7 +9,11 @@ export function RunSummary({ run }: { run: RunMetadata }) {
   if (run.status === "running") return null;
   return (
     <HStack gap={2} vAlign="center" xstyle={styles.footer}>
-      <Text type="supporting">{runSummary(run).join(" · ")}</Text>
+      <Tooltip content={<Text type="supporting">{usageDetails(run)}</Text>}>
+        <Text type="supporting" tabIndex={0}>
+          {runSummary(run).join(" · ")}
+        </Text>
+      </Tooltip>
     </HStack>
   );
 }

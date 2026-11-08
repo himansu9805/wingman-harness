@@ -61,3 +61,26 @@ test("approval resumes share a turn while processing and approval waiting stay s
   for (const status of ["failed", "interrupted"])
     assert.ok(finishMetadata(resumed, status, new Date(), 1, emptyUsage()).turn.completedAt);
 });
+
+test("delegated accounting reconciles missing reports without recounting replay or earlier resume segments", async () => {
+  const { DelegatedUsageTracker } = await import("@wingman/core/turns");
+  const tracker = new DelegatedUsageTracker();
+  const snapshot = (calls) => ({ tasks: [{ taskId: "worker", usage: { modelCalls: calls } }] });
+  tracker.observe(snapshot(2)); // Already counted before this resume.
+  tracker.observe(snapshot(3));
+  tracker.report("worker");
+  tracker.observe(snapshot(3));
+  const reported = addUsage(emptyUsage(), counts(5, 2, 7));
+  assert.deepEqual(tracker.finish(reported), reported);
+  tracker.observe(snapshot(4));
+  const final = tracker.finish(reported);
+  assert.equal(final.modelCalls, 2);
+  assert.equal(final.missingCalls, 1);
+  assert.equal(final.totalTokens, 7);
+  assert.equal(final.availability, "partial");
+  assert.deepEqual(
+    tracker.finish(reported),
+    final,
+    "repeated final snapshots do not add missing calls again",
+  );
+});

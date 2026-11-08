@@ -29,9 +29,13 @@ export function applyEvent(state: Activity, event: ThreadEvent): Activity {
             : "running";
   // A snapshot replaces the previous version; usage values are already cumulative.
   const previous =
-    event.type === "run"
-      ? state.events.filter((item) => item.type !== "run" || item.runId !== event.runId)
-      : state.events;
+    event.type === "delegation_plan"
+      ? state.events.filter(
+          (item) => item.type !== "delegation_plan" || item.planId !== event.planId,
+        )
+      : event.type === "run"
+        ? state.events.filter((item) => item.type !== "run" || item.runId !== event.runId)
+        : state.events;
   return { runId: event.runId, phase, events: [...previous, event].slice(-200) };
 }
 

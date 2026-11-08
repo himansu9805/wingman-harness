@@ -3,3 +3,5 @@ export * from "./core/turn";
 export * from "./core/history";
 
 export * from "./core/usage";
+
+export { DelegatedUsageTracker } from "./core/delegation/accounting";

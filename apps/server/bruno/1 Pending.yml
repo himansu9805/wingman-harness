@@ -13,7 +13,12 @@ runtime:
     - type: after-response
       code: |-
         const approvals = res.getBody();
-        if (res.status === 200) bru.setVar("approvalId", approvals[0]?.id ?? "");
+        if (res.status === 200) {
+          bru.setVar("approvalId", approvals[0]?.id ?? "");
+          bru.setVar("approvalAnswers", JSON.stringify(Object.fromEntries(approvals.map(item => [item.id, true]))));
+          bru.setVar("denialAnswers", JSON.stringify(Object.fromEntries(approvals.map(item => [item.id, false]))));
+          bru.setVar("pendingApprovals", JSON.stringify(approvals, null, 2));
+        }
     - type: tests
       code: |-
         test("200 with a list", () => {
@@ -27,3 +32,10 @@ settings:
   followRedirects: true
   maxRedirects: 5
   forwardAuthorizationHeader: true
+
+docs: |-
+  Review the complete response before resuming. execution identifies agentId,
+  taskId and toolCallId; match taskId to a delegation_plan snapshot for its key.
+  This request captures the current exact batch as approvalAnswers and denialAnswers.
+  Capturing variables does not resume or execute commands. Approve/Deny are separate POSTs.
+  Refresh Pending after every pause: composite approval IDs are opaque and can change.

@@ -10,6 +10,7 @@ import {
   DelegationStreamSchema,
   type DelegationEvent,
   type DelegationActivity,
+  type DelegationPlanSnapshot,
 } from "./delegation/types";
 import {
   pendingApprovals,
@@ -17,6 +18,7 @@ import {
   type NativeApproval,
   type PendingApproval,
 } from "./approvals";
+export type { DelegationPlanSnapshot, DelegationTaskSnapshot } from "./delegation/types";
 export type { PendingApproval } from "./approvals";
 
 /** Routing state exists only on graphs configured with the router middleware. */
@@ -30,6 +32,7 @@ const routeSchema = z.object({
 export type TurnEvent =
   | DelegationEvent
   | DelegationActivity
+  | DelegationPlanSnapshot
   | {
       type: "route";
       choice: string;
@@ -60,7 +63,11 @@ export interface TurnOptions {
   /** Awaited before processing the next event. */
   onEvent?: TurnEventHandler;
   /** Called once per newly generated model message, including tool requests. */
-  onModelUsage?: (usage: ModelUsage, messageId?: string) => Promise<void>;
+  onModelUsage?: (
+    usage: ModelUsage,
+    messageId?: string,
+    source?: { taskId: string },
+  ) => Promise<void>;
   /** Bind server-created scheduled jobs to their catalogue thread. */
   schedulerThreadId?: string;
   /** Internal child ownership, set only by the delegation runner. */
@@ -181,7 +188,7 @@ export async function runTurn(
         const key = `${frame.data.taskId}:${frame.data.index}`;
         if (!delegatedUsageIds.has(key)) {
           delegatedUsageIds.add(key);
-          await onModelUsage(frame.data.usage);
+          await onModelUsage(frame.data.usage, undefined, { taskId: frame.data.taskId });
         }
       }
       continue;
@@ -277,7 +284,7 @@ export async function runUntilDone(
  * @param options Abort signal and event callback.
  */
 export async function declinePending(agent: Agent, threadId: string, options: TurnOptions) {
-  await agent.cancelDelegations(threadId);
+  await agent.cancelDelegations(threadId, options.onEvent);
   const pending = await getPendingApprovals(agent, threadId);
   if (pending.length === 0) {
     // Aborted executions may stop before an interrupt is checkpointed. Resolve

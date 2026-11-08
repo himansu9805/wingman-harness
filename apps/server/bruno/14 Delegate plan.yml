@@ -1,0 +1,41 @@
+info:
+  name: Delegate a task plan
+  type: http
+  seq: 14
+
+http:
+  method: POST
+  url: "{{baseUrl}}/threads/{{threadId}}/messages"
+  body:
+    type: json
+    data: |-
+      {
+        "message": "Use delegate_task to plan three tasks: research and compare as independent analyst tasks, then verify with the operator after both succeed. Give each task a unique key, scoped context, expectedResult and dependsOn keys. For verification request uptime through exec_bash_command, respecting its approval policy, then synthesize the findings here."
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: if (res.status === 202) bru.setVar("runId", res.getBody().runId);
+    - type: tests
+      code: |-
+        test("accepts a background turn", () => {
+          expect(res.status).to.equal(202);
+          expect(res.getBody().runId).to.be.a("string");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
+
+docs: |-
+  Start Events alongside this request. A live model chooses whether/how to delegate;
+  this is a manual smoke test, not a deterministic assertion of model behavior.
+  Expect typed delegation_plan snapshots and child activity in this same thread.
+  If verification pauses, use Pending, review ownership and submit the exact batch.
+  Neither this prompt nor another agent constitutes permission to bypass approval.
+  Use automated delegation-plan/observation/HTTP tests for deterministic assertions.

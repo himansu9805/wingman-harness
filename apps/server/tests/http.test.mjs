@@ -1450,10 +1450,122 @@ test(
     const metadata = journal.filter((row) => row.payload.type === "run").at(-1).payload.metadata;
     assert.equal(metadata.usage.modelCalls, 5);
     assert.equal(metadata.usage.totalTokens, 35);
+    const snapshots = journal.filter((row) => row.payload.type === "delegation_plan");
+    assert.ok(snapshots[0].payload.tasks.every((task) => task.status === "pending"));
+    const latest = snapshots.at(-1);
+    assert.equal(latest.payload.status, "completed");
+    assert.equal(
+      latest.payload.tasks.reduce((sum, task) => sum + task.usage.totalTokens, 0),
+      21,
+    );
+    const replay = await api.request("fresh/events", {
+      headers: { "last-event-id": `fresh:${BigInt(latest.sequence) - 1n}` },
+    });
+    const reader = replay.body.getReader();
+    let text = "";
+    try {
+      while (!/event: delegation_plan\ndata: (.+)\n\n/.test(text)) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false);
+        text += new TextDecoder().decode(chunk.value);
+      }
+      const snapshot = JSON.parse(text.match(/event: delegation_plan\ndata: (.+)\n\n/)[1]);
+      assert.deepEqual(snapshot.tasks, latest.payload.tasks);
+    } finally {
+      await reader.cancel();
+    }
+    assert.equal(
+      f.trace.calls.filter((call) => call.child).length,
+      3,
+      "read-only replay does not run workers again",
+    );
+
     const [record] = await f.store.listPlans("fresh");
     assert.equal(record.status, "completed");
     assert.equal((await api.request("fresh", { method: "DELETE" })).status, 204);
     assert.deepEqual(await f.store.listPlans("fresh"), []);
     assert.deepEqual(await f.store.listConversation("fresh"), []);
+  },
+);
+
+test(
+  "unreported worker model attempts remain missing in inclusive parent totals",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const { tsImport } = await import("tsx/esm/api");
+    const { createDelegationRuntime } = await tsImport(
+      "../../../tests/fixtures/delegation-runtime.mjs",
+      import.meta.url,
+    );
+    const f = await createDelegationRuntime({
+      child: async () => [{ id: "forbidden", name: "not_granted", args: {}, type: "tool_call" }],
+    });
+    const api = await server(t, f.agent);
+    t.after(() => f.runtime.close());
+    terminal(await api.stream("fresh/messages", { message: "delegate" }), "done");
+    const metadata = (await api.json("fresh/runs")).runs[0];
+    assert.equal(metadata.usage.modelCalls, 3);
+    assert.equal(metadata.usage.missingCalls, 1);
+    assert.equal(metadata.usage.availability, "partial");
+    const rows = await api.journal.listAfter("fresh", "0", 100);
+    const snapshot = rows.filter((row) => row.payload.type === "delegation_plan").at(-1).payload;
+    assert.equal(snapshot.tasks[0].usage.modelCalls, 1);
+    assert.equal(snapshot.tasks[0].usage.totalTokens, null);
+    assert.equal(snapshot.tasks[0].usage.availability, "unavailable");
+  },
+);
+
+test(
+  "scheduled plans keep worker approvals, snapshots and resumed accounting in their originating chat",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const { tsImport } = await import("tsx/esm/api");
+    const { createDelegationRuntime } = await tsImport(
+      "../../../tests/fixtures/delegation-runtime.mjs",
+      import.meta.url,
+    );
+    const { ToolMessage } = await import("@langchain/core/messages");
+    const f = await createDelegationRuntime({
+      args: { agentId: "operator", objective: "Check uptime", context: "" },
+      child: async (messages) =>
+        messages.some(ToolMessage.isInstance)
+          ? "declined"
+          : [
+              {
+                id: "scheduled-command",
+                name: "exec_bash_command",
+                args: { command: "uptime" },
+                type: "tool_call",
+              },
+            ],
+    });
+    let dispatch;
+    const api = await server(t, f.agent, {
+      runtime: {
+        startScheduler: async (callback) => {
+          dispatch = callback;
+        },
+      },
+    });
+    t.after(() => f.runtime.close());
+    await dispatch({ jobId: "scheduled-plan", prompt: "delegate uptime", threadId: "fresh" });
+    const pending = await api.json("fresh/pending");
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].execution.agentId, "operator");
+    const [task] = await f.store.listConversation("fresh");
+    assert.equal(task.schedulerThreadId, "fresh");
+    const paused = (await api.json("fresh/runs")).runs[0];
+    assert.equal(paused.origin, "scheduled");
+    assert.equal(paused.status, "paused");
+    terminal(await api.stream("fresh/resume", { answers: { [pending[0].id]: false } }), "done");
+    const final = (await api.json("fresh/runs")).runs[0];
+    assert.equal(final.turn.usage.totalTokens, 28);
+    assert.equal(final.turn.usage.modelCalls, 4);
+    const rows = await api.journal.listAfter("fresh", "0", 100);
+    assert.equal(
+      rows.filter((row) => row.payload.type === "delegation_plan").at(-1).payload.status,
+      "completed",
+    );
+    assert.deepEqual(await api.json("fresh/pending"), []);
   },
 );

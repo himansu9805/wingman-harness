@@ -21,7 +21,8 @@ import {
   type DelegationEvent,
 } from "./types";
 
-interface Invocation {
+export interface Invocation {
+  onTaskUpdate?: () => Promise<void>;
   signal?: AbortSignal;
   schedulerThreadId?: string;
   emit(frame: DelegationStream): void;
@@ -209,6 +210,7 @@ export class DelegationRunner {
     });
     if (task.status === "recovery_required") {
       this.emit(task, "recovery_required", invocation);
+      await invocation.onTaskUpdate?.();
       return task;
     }
     const signal = AbortSignal.any([
@@ -220,6 +222,7 @@ export class DelegationRunner {
     this.emit(task, answers ? "resumed" : "started", invocation);
     let response: TurnResult;
     try {
+      await invocation.onTaskUpdate?.();
       if (remaining <= 0)
         throw new DelegationRejected("Specialist processing-time budget exhausted");
       const child = await this.createAgent(
@@ -258,6 +261,7 @@ export class DelegationRunner {
           });
           if (index >= 0)
             invocation.emit({ type: "delegation_usage", taskId: task.taskId, index, usage });
+          await invocation.onTaskUpdate?.();
         },
       };
       response = await AsyncLocalStorageProviderSingleton.runWithConfig({}, () =>
@@ -304,6 +308,7 @@ export class DelegationRunner {
         };
       });
       this.emit(finished, finished.status as DelegationEvent["phase"], invocation);
+      await invocation.onTaskUpdate?.();
       return finished;
     }
     // A checkpoint may already contain the result or interrupt. If this write
@@ -338,6 +343,7 @@ export class DelegationRunner {
       finished.status === "waiting_approval" ? "waiting_approval" : "completed",
       invocation,
     );
+    await invocation.onTaskUpdate?.();
     return finished;
   }
 
@@ -414,6 +420,7 @@ export class DelegationRunner {
       };
     });
     this.emit(recovered, recovered.status as DelegationEvent["phase"], invocation);
+    await invocation.onTaskUpdate?.();
     return recovered;
   }
 

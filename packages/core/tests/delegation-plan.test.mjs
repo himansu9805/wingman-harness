@@ -357,7 +357,15 @@ test("new user messages cancel the whole paused plan and block its unstarted dep
   });
   try {
     assert.equal((await startTurn(f.agent, "delegate", "cancel-plan", options())).kind, "paused");
-    await declinePending(f.agent, "cancel-plan", options());
+    const cancelledEvents = [];
+    await declinePending(f.agent, "cancel-plan", {
+      ...options(),
+      onEvent: async (event) => cancelledEvents.push(event),
+    });
+    assert.equal(
+      cancelledEvents.filter((event) => event.type === "delegation_plan").at(-1).status,
+      "cancelled",
+    );
     const [record] = await f.store.listPlans("cancel-plan");
     assert.equal(record.status, "cancelled");
     assert.deepEqual(

@@ -22,3 +22,6 @@ docs: |-
   Set lastEventId to a received id, for example <threadId>:2.
   Replays events strictly after that id, then waits for new events.
   The stream stays open. Cancel it manually when finished.
+  Replaying a delegation_plan snapshot must replace its planId state, not add tokens.
+  Snapshot/task IDs remain stable across approval resumes and process reconnection.
+  The stream is read-only: reconnecting never submits work or approvals again.

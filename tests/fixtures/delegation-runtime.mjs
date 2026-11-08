@@ -14,15 +14,21 @@ import { createLocalTools } from "../../packages/core/src/tools/tools.ts";
 import { MemoryDelegationStore } from "../../packages/core/src/core/delegation/store.ts";
 
 class DelegationModel extends BaseChatModel {
-  constructor(trace, child, args, boundTools = []) {
+  constructor(
+    trace,
+    child,
+    args,
+    boundTools = [],
+    summarize = (result) => `Coordinator: ${result.text}`,
+  ) {
     super({});
-    Object.assign(this, { trace, child, args, boundTools });
+    Object.assign(this, { trace, child, args, boundTools, summarize });
   }
   _llmType() {
     return "durable-delegation-test";
   }
   bindTools(tools) {
-    return new DelegationModel(this.trace, this.child, this.args, tools);
+    return new DelegationModel(this.trace, this.child, this.args, tools, this.summarize);
   }
   async _generate(messages, options) {
     const prompt = messages
@@ -42,7 +48,7 @@ class DelegationModel extends BaseChatModel {
       const lastUser = messages.findLastIndex(HumanMessage.isInstance);
       const result = messages.slice(lastUser + 1).find(ToolMessage.isInstance);
       response = result
-        ? `Coordinator: ${result.text}`
+        ? this.summarize(result)
         : messages[lastUser].text.startsWith("simple")
           ? "Direct response"
           : [
@@ -71,6 +77,7 @@ export async function createDelegationRuntime({
   maxConcurrency = 2,
   maxTasks = 8,
   operatorTools = [],
+  summarize,
   child = async () => "Specialist analysis",
   timeoutMs = 30000,
   maxModelCalls = 8,
@@ -85,6 +92,8 @@ export async function createDelegationRuntime({
     trace,
     child,
     plan ?? { tasks: [{ key: "task", ...args, expectedResult: "Concise answer", dependsOn: [] }] },
+    [],
+    summarize,
   );
   const definition = createDefaultAgentDefinition();
   definition.delegation.timeoutMs = timeoutMs;
