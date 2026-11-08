@@ -1,3 +1,4 @@
+import { DelegationCoordinator } from "./delegation/coordinator";
 import type { McpConnections } from "../mcp/mcp";
 import type { CheckpointStore } from "./checkpointer";
 import type { SkillMeta } from "../skills/skills";
@@ -83,6 +84,7 @@ export class CoreRuntime {
   readonly toolCatalogue: AgentToolCatalogue;
   readonly models: AgentModels;
   readonly delegations: DelegationRunner;
+  readonly plans: DelegationCoordinator;
 
   private constructor(
     private readonly dependencies: RuntimeDependencies,
@@ -107,9 +109,9 @@ export class CoreRuntime {
         ...(agentTools[definition.id] ?? []),
         createDelegationTool(
           (request, identity, invocation) =>
-            this.delegations.run(definition.id, request, identity, invocation),
+            this.plans.run(definition.id, request, identity, invocation),
           (taskId, answers, invocation) =>
-            this.delegations.resume(definition.id, taskId, answers, invocation),
+            this.plans.resume(definition.id, taskId, answers, invocation),
           targets,
         ),
       ];
@@ -147,6 +149,12 @@ export class CoreRuntime {
       },
     );
     this.delegations.validateTargets();
+    this.plans = new DelegationCoordinator(
+      this.agents,
+      delegationStore,
+      this.delegations,
+      configuration.delegationConcurrency ?? 4,
+    );
   }
 
   /**
@@ -240,6 +248,7 @@ export class CoreRuntime {
       this.mcp,
       this.delegationStore,
       this.delegations,
+      this.plans,
     ).finally(() => {
       this.closed = true;
     }));
@@ -253,12 +262,14 @@ async function releaseResources(
   mcp?: McpConnections,
   delegations?: DelegationStore,
   runner?: DelegationRunner,
+  plans?: DelegationCoordinator,
 ): Promise<void> {
   const errors: unknown[] = [];
 
   // Drain the scheduler before closing services its handlers may still use.
   const cleanupSteps = [
     () => dependencies.stopScheduler(),
+    () => plans?.close(),
     () => runner?.close(),
     () => dependencies.closeResults(),
     () => delegations?.close(),

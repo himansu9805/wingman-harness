@@ -96,7 +96,7 @@ test("parent tool replay reuses completed result and does not count child usage 
     assert.equal(f.trace.calls.filter((call) => call.child).length, 1);
     assert.deepEqual(
       events.filter((event) => event.type === "delegation").map((event) => event.phase),
-      ["reused"],
+      [],
     );
     assert.equal(usage.length, 1);
   } finally {

@@ -66,6 +66,10 @@ class DelegationModel extends BaseChatModel {
 export async function createDelegationRuntime({
   store = new MemoryDelegationStore(),
   saver = new MemorySaver(),
+  plan,
+  delegationConcurrency = 4,
+  maxConcurrency = 2,
+  maxTasks = 8,
   operatorTools = [],
   child = async () => "Specialist analysis",
   timeoutMs = 30000,
@@ -77,10 +81,16 @@ export async function createDelegationRuntime({
   },
 } = {}) {
   const trace = { calls: [], memory: 0 };
-  const model = new DelegationModel(trace, child, args);
+  const model = new DelegationModel(
+    trace,
+    child,
+    plan ?? { tasks: [{ key: "task", ...args, expectedResult: "Concise answer", dependsOn: [] }] },
+  );
   const definition = createDefaultAgentDefinition();
   definition.delegation.timeoutMs = timeoutMs;
   definition.delegation.maxModelCalls = maxModelCalls;
+  definition.delegation.maxConcurrency = maxConcurrency;
+  definition.delegation.maxTasks = maxTasks;
   const runtime = await CoreRuntime.create({
     async openMcp() {
       return {
@@ -99,6 +109,7 @@ export async function createDelegationRuntime({
     },
     async loadConfiguration() {
       return {
+        delegationConcurrency,
         definitions: [
           definition,
           analystAgentDefinition,

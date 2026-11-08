@@ -33,11 +33,13 @@ export const AgentDefinitionSchema = z
     delegation: z
       .object({
         agents: toolSelection.default([]),
+        maxTasks: z.number().int().min(1).max(8).default(8),
+        maxConcurrency: z.number().int().min(1).max(4).default(2),
         maxModelCalls: z.number().int().min(1).max(100).default(8),
         timeoutMs: z.number().int().min(1).max(120000).default(30000),
       })
       .strict()
-      .default({ agents: [], timeoutMs: 30000, maxModelCalls: 8 }),
+      .default({ agents: [], timeoutMs: 30000, maxModelCalls: 8, maxTasks: 8, maxConcurrency: 2 }),
 
     capabilities: z
       .object({

@@ -9,6 +9,8 @@ export type RegisteredAgentDefinition = Readonly<
 > & {
   readonly delegation: {
     readonly agents: readonly string[];
+    readonly maxTasks: number;
+    readonly maxConcurrency: number;
     readonly maxModelCalls: number;
     readonly timeoutMs: number;
   };

@@ -48,6 +48,8 @@ export const ToolLedgerSchema = z.object({
 
 /** State, ownership and budgets are durable across approval pauses and process restarts. */
 export const DelegatedTaskSchema = z.object({
+  planId: z.string().uuid().nullable(),
+  planTaskKey: z.string().nullable(),
   parentAgentId: z.string().min(1),
   schedulerThreadId: z.string().nullable(),
   taskId: z.string().uuid(),
@@ -97,9 +99,11 @@ export type DelegatedTask = z.infer<typeof DelegatedTaskSchema>;
 export type DelegationIdentity = Pick<
   DelegatedTask,
   "conversationId" | "parentExecutionId" | "parentToolCallId"
->;
+> & { planId?: string | null; planTaskKey?: string | null };
 export const DelegationEventSchema = z.object({
   type: z.literal("delegation"),
+  planId: z.string().uuid().nullable(),
+  planTaskKey: z.string().nullable(),
   phase: z.enum([
     "started",
     "waiting_approval",

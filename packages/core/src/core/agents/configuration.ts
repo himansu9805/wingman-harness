@@ -13,6 +13,8 @@ export interface AgentModels {
 
 /** Trusted application assembly, separate from user messages and task input. */
 export interface AgentConfiguration {
+  /** Maximum simultaneous delegated workers across this runtime. */
+  readonly delegationConcurrency?: number;
   readonly definitions: readonly AgentDefinition[];
   readonly globalTools: readonly StructuredToolInterface[];
   readonly agentTools?: Readonly<Record<string, readonly StructuredToolInterface[]>>;

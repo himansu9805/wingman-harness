@@ -40,6 +40,8 @@ export interface Catalogue {
 export type ThreadEvent = { runId: string; createdAt?: string } & (
   | {
       type: "delegation";
+      planId: string | null;
+      planTaskKey: string | null;
       phase:
         | "started"
         | "waiting_approval"

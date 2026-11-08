@@ -58,6 +58,8 @@ export class DelegationRunner {
   private emit(task: DelegatedTask, phase: DelegationEvent["phase"], invocation: Invocation) {
     invocation.emit({
       type: "delegation",
+      planId: task.planId,
+      planTaskKey: task.planTaskKey,
       phase,
       taskId: task.taskId,
       agentId: task.request.agentId,
@@ -98,6 +100,8 @@ export class DelegationRunner {
       request: parsed,
       requestHash: hash,
     });
+    if (task.planId !== (identity.planId ?? null))
+      throw new DelegationRejected("Task belongs to another plan");
     if (task.parentAgentId !== parentId)
       throw new DelegationRejected("Task belongs to another parent agent");
     if (task.parentToolCallId !== identity.parentToolCallId)

@@ -70,12 +70,12 @@ export class Agent {
 
   /** Cleans internal child checkpoints without creating or deleting sidebar chats. */
   deleteDelegatedState(conversationId: string): Promise<void> {
-    return this.runtime.delegations.deleteConversation(conversationId);
+    return this.runtime.plans.deleteConversation(conversationId);
   }
 
   /** Cancels unfinished workers before abandoning a parent turn. */
   cancelDelegations(conversationId: string): Promise<void> {
-    return this.runtime.delegations.cancelConversation(conversationId);
+    return this.runtime.plans.cancelConversation(conversationId);
   }
 
   /**

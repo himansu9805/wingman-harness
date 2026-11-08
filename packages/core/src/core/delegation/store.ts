@@ -1,3 +1,11 @@
+import {
+  newPlan,
+  mutatePlan,
+  finishedPlan,
+  type PlanRecord,
+  type PlanClaim,
+  type PlanMutation,
+} from "./plan";
 import { randomUUID } from "node:crypto";
 import {
   DelegatedTaskSchema,
@@ -16,6 +24,12 @@ export type TaskMutation = (task: DelegatedTask) => DelegatedTask;
 /** Atomic mutations run synchronously under a per-task lock, without external I/O. */
 export interface DelegationStore {
   init(): Promise<void>;
+  claimPlan(input: PlanClaim): Promise<{ created: boolean; plan: PlanRecord }>;
+  getPlan(planId: string): Promise<PlanRecord>;
+  updatePlan(planId: string, mutation: PlanMutation): Promise<PlanRecord>;
+  listPlans(conversationId: string, unfinished?: boolean): Promise<PlanRecord[]>;
+  deletePlan(planId: string): Promise<void>;
+  listPlanTasks(planId: string): Promise<DelegatedTask[]>;
   claim(input: TaskClaim): Promise<{ created: boolean; task: DelegatedTask }>;
   get(taskId: string): Promise<DelegatedTask>;
   update(taskId: string, mutation: TaskMutation): Promise<DelegatedTask>;
@@ -28,6 +42,8 @@ export function newTask(input: TaskClaim): DelegatedTask {
   const taskId = randomUUID();
   return DelegatedTaskSchema.parse({
     ...input,
+    planId: input.planId ?? null,
+    planTaskKey: input.planTaskKey ?? null,
     schedulerThreadId: input.schedulerThreadId ?? null,
     taskId,
     checkpointThreadId: `wingman-delegation:${taskId}`,
@@ -60,6 +76,8 @@ export const terminal = (task: DelegatedTask) =>
 export function mutateTask(current: DelegatedTask, mutation: TaskMutation): DelegatedTask {
   const next = mutation(structuredClone(current));
   for (const key of [
+    "planId",
+    "planTaskKey",
     "schedulerThreadId",
     "parentAgentId",
     "taskId",
@@ -84,6 +102,7 @@ export function mutateTask(current: DelegatedTask, mutation: TaskMutation): Dele
 }
 export class MemoryDelegationStore implements DelegationStore {
   private readonly tasks = new Map<string, DelegatedTask>();
+  private readonly plans = new Map<string, PlanRecord>();
   private closed = false;
   private assertOpen() {
     if (this.closed) throw new Error("Delegation store is closed");
@@ -96,12 +115,58 @@ export class MemoryDelegationStore implements DelegationStore {
     const existing = [...this.tasks.values()].find(
       (task) =>
         task.conversationId === input.conversationId &&
-        task.parentExecutionId === input.parentExecutionId,
+        task.parentExecutionId === input.parentExecutionId &&
+        task.planTaskKey === (input.planTaskKey ?? null),
     );
     if (existing) return { created: false, task: structuredClone(existing) };
     const task = newTask(input);
     this.tasks.set(task.taskId, task);
     return { created: true, task: structuredClone(task) };
+  }
+  async claimPlan(input: PlanClaim) {
+    this.assertOpen();
+    const existing = [...this.plans.values()].find(
+      (plan) =>
+        plan.conversationId === input.conversationId &&
+        plan.parentExecutionId === input.parentExecutionId,
+    );
+    if (existing) return { created: false, plan: structuredClone(existing) };
+    const plan = newPlan(input);
+    this.plans.set(plan.planId, plan);
+    return { created: true, plan: structuredClone(plan) };
+  }
+  async getPlan(planId: string) {
+    this.assertOpen();
+    const plan = this.plans.get(planId);
+    if (!plan) throw new Error("Delegation plan is missing");
+    return structuredClone(plan);
+  }
+  async updatePlan(planId: string, mutation: PlanMutation) {
+    this.assertOpen();
+    const latest = this.plans.get(planId);
+    if (!latest) throw new Error("Delegation plan is missing");
+    const plan = mutatePlan(latest, mutation);
+    this.plans.set(planId, plan);
+    return structuredClone(plan);
+  }
+  async listPlans(conversationId: string, unfinished = false) {
+    this.assertOpen();
+    return [...this.plans.values()]
+      .filter(
+        (plan) => plan.conversationId === conversationId && (!unfinished || !finishedPlan(plan)),
+      )
+      .slice(0, 100)
+      .map((plan) => structuredClone(plan));
+  }
+  async deletePlan(planId: string) {
+    this.assertOpen();
+    this.plans.delete(planId);
+  }
+  async listPlanTasks(planId: string) {
+    this.assertOpen();
+    return [...this.tasks.values()]
+      .filter((task) => task.planId === planId)
+      .map((task) => structuredClone(task));
   }
   async get(taskId: string) {
     this.assertOpen();

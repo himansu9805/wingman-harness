@@ -30,7 +30,7 @@ test(
     await admin.query(`CREATE SCHEMA "${schema}"`);
     const url = new URL(connectionString);
     url.searchParams.set("options", `-c search_path=${schema}`);
-    const open = async (child, args) => {
+    const open = async (child, args, plan) => {
       const pool = new pg.Pool({ connectionString: url.toString() });
       const saver = new PostgresSaver(pool, undefined, { schema });
       await saver.setup();
@@ -41,6 +41,7 @@ test(
         saver,
         ...(child ? { child } : {}),
         ...(args ? { args } : {}),
+        ...(plan ? { plan } : {}),
       });
       const close = async () => {
         if (closed) return;
@@ -87,7 +88,7 @@ test(
     });
     assert.deepEqual(
       events.filter((event) => event.type === "delegation").map((event) => event.phase),
-      ["reused"],
+      [],
     );
     assert.equal(second.trace.calls.filter((call) => call.child).length, 0);
     assert.equal(usage.length, 1);
@@ -249,5 +250,117 @@ test(
     assert.equal(migrated.usage[0].usage.totalTokens, 7);
     await competitor.init();
     assert.deepEqual(await competitor.get(legacy.taskId), migrated);
+
+    const planRequest = {
+      tasks: [
+        {
+          key: "research",
+          agentId: "analyst",
+          objective: "Research",
+          context: "scoped",
+          expectedResult: "Findings",
+          dependsOn: [],
+        },
+        {
+          key: "inspect",
+          agentId: "operator",
+          objective: "Inspect",
+          context: "",
+          expectedResult: "Command output",
+          dependsOn: ["research"],
+        },
+        {
+          key: "review",
+          agentId: "analyst",
+          objective: "Review",
+          context: "",
+          expectedResult: "Review",
+          dependsOn: ["inspect"],
+        },
+      ],
+    };
+    const { HumanMessage } = await import("@langchain/core/messages");
+    const plannedWorker = async (messages) => {
+      const input = JSON.parse(
+        messages.find(HumanMessage.isInstance).text.split("\n").slice(1).join("\n"),
+      );
+      if (input.agentId === "analyst")
+        return input.objective.startsWith("Research") ? "Saved research" : "Saved review";
+      const result = messages.find(ToolMessage.isInstance);
+      return result
+        ? "Command declined"
+        : [
+            {
+              id: "plan-uptime",
+              name: "exec_bash_command",
+              args: { command: "uptime" },
+              type: "tool_call",
+            },
+          ];
+    };
+    const planned = await open(plannedWorker, undefined, planRequest);
+    const pausedPlanResult = await startTurn(planned.agent, "delegate", "durable-plan", {
+      signal: AbortSignal.timeout(10000),
+    });
+    assert.equal(pausedPlanResult.kind, "paused");
+    const [pausedPlan] = await planned.store.listPlans("durable-plan");
+    assert.deepEqual(
+      pausedPlan.results.map((result) => result.status),
+      ["completed", "waiting_approval", "pending"],
+    );
+    await planned.close();
+    const reopened = await open(plannedWorker, undefined, planRequest);
+    assert.deepEqual(
+      await getPendingApprovals(reopened.agent, "durable-plan"),
+      pausedPlanResult.approvals,
+    );
+    const finalPlanResult = await resumeTurn(
+      reopened.agent,
+      { [pausedPlanResult.approvals[0].id]: false },
+      "durable-plan",
+      { signal: AbortSignal.timeout(10000) },
+    );
+    assert.equal(finalPlanResult.kind, "done");
+    const finalPlan = await reopened.store.getPlan(pausedPlan.planId);
+    assert.equal(finalPlan.status, "completed");
+    assert.deepEqual(
+      finalPlan.results.map((result) => result.key),
+      ["research", "inspect", "review"],
+    );
+    assert.equal(reopened.trace.calls.filter((call) => call.child).length, 2);
+    assert.equal((await reopened.store.listPlanTasks(finalPlan.planId)).length, 3);
+    await assert.rejects(
+      reopened.store.updatePlan(finalPlan.planId, (plan) => ({ ...plan, status: "running" })),
+      /immutable/,
+    );
+    const planInput = {
+      parentAgentId: "default",
+      conversationId: "plan-claim",
+      parentExecutionId: "plan-user",
+      parentToolCallId: "plan-call",
+      request: planRequest,
+      requestHash: "hash",
+      schedulerThreadId: null,
+    };
+    const planClaims = await Promise.all([
+      competitor.claimPlan(planInput),
+      reopened.store.claimPlan(planInput),
+    ]);
+    assert.equal(planClaims.filter((claim) => claim.created).length, 1);
+    assert.equal(planClaims[0].plan.planId, planClaims[1].plan.planId);
+    const planSnapshot = planClaims[0].plan;
+    const acquirePlan = (store) =>
+      store.updatePlan(planSnapshot.planId, (current) => {
+        if (current.version !== planSnapshot.version) throw new Error("Plan already claimed");
+        return { ...current, ownerToken: randomUUID() };
+      });
+    const planOwners = await Promise.allSettled([
+      acquirePlan(competitor),
+      acquirePlan(reopened.store),
+    ]);
+    assert.equal(planOwners.filter((result) => result.status === "fulfilled").length, 1);
+    await deleteThreadState(reopened.agent, "durable-plan");
+    assert.deepEqual(await reopened.store.listPlans("durable-plan"), []);
+    assert.deepEqual(await reopened.store.listPlanTasks(finalPlan.planId), []);
   },
 );

@@ -519,6 +519,8 @@ test("delegation custom frames await persistence and deduplicate child usage bef
   };
   const event = {
     type: "delegation",
+    planId: null,
+    planTaskKey: null,
     phase: "started",
     taskId,
     agentId: "analyst",

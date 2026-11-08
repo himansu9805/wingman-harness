@@ -185,8 +185,10 @@ for (const outcome of ["waiting_approval", "completed"])
       const calls = f.trace.calls.length;
       const recovered = await f.runtime.delegations.run(
         "default",
-        args,
+        task.request,
         {
+          planId: task.planId,
+          planTaskKey: task.planTaskKey,
           conversationId: task.conversationId,
           parentExecutionId: task.parentExecutionId,
           parentToolCallId: task.parentToolCallId,
@@ -403,8 +405,10 @@ test("a tool that performs an action and then fails cannot be silently retried",
     assert.equal(task.tools[0].status, "uncertain");
     await f.runtime.delegations.run(
       "default",
-      args,
+      task.request,
       {
+        planId: task.planId,
+        planTaskKey: task.planTaskKey,
         conversationId: task.conversationId,
         parentExecutionId: task.parentExecutionId,
         parentToolCallId: task.parentToolCallId,

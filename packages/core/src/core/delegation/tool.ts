@@ -1,34 +1,32 @@
+import { DelegationPlanSchema, type DelegationPlan, type PlanRecord } from "./plan";
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { interrupt, isGraphInterrupt } from "@langchain/langgraph";
 import { tool, type ToolRuntime } from "@langchain/core/tools";
 import {
-  DelegationRequestSchema,
   DelegationRejected,
   DelegationBusyError,
   type DelegationIdentity,
-  type DelegationRequest,
-  type DelegatedTask,
   type DelegationStream,
 } from "./types";
 
 export type Delegate = (
-  request: DelegationRequest,
+  request: DelegationPlan,
   identity: DelegationIdentity,
   invocation: {
     signal?: AbortSignal;
     schedulerThreadId?: string;
     emit(frame: DelegationStream): void;
   },
-) => Promise<DelegatedTask>;
+) => Promise<PlanRecord>;
 
 /** Bind delegation to a trusted parent allowlist; models supply only objective and context. */
 export function createDelegationTool(
   delegate: Delegate,
   resume: (
-    taskId: string,
+    planId: string,
     answers: Record<string, boolean>,
     invocation: Parameters<Delegate>[2],
-  ) => Promise<DelegatedTask>,
+  ) => Promise<PlanRecord>,
   targets: readonly { id: string; description: string }[],
 ) {
   return tool(
@@ -55,7 +53,7 @@ export function createDelegationTool(
           ...(typeof schedulerThreadId === "string" ? { schedulerThreadId } : {}),
           emit: (frame: DelegationStream) => runtime.writer?.(frame),
         };
-        let task = await delegate(
+        let plan = await delegate(
           request,
           {
             conversationId,
@@ -67,31 +65,26 @@ export function createDelegationTool(
         // Revisit earlier interrupt positions during graph replay. Only the
         // unresolved durable round can resume the child; earlier answers are inert.
         let roundIndex = 0;
-        while (task.status === "waiting_approval" && roundIndex < task.approvalRounds.length) {
-          const round = task.approvalRounds[roundIndex]!;
+        while (plan.status === "waiting_approval" && roundIndex < plan.approvalRounds.length) {
+          const round = plan.approvalRounds[roundIndex]!;
           const answers = interrupt<
             import("../approvals").ApprovalPayload,
             Record<string, boolean>
           >({
             kind: "delegated_approvals",
-            taskId: task.taskId,
+            planId: plan.planId,
             approvals: round.approvals,
           });
-          if (!round.answers) task = await resume(task.taskId, answers, invocation);
+          if (!round.answers) plan = await resume(plan.planId, answers, invocation);
           roundIndex++;
         }
         return JSON.stringify({
-          taskId: task.taskId,
-          agentId: task.request.agentId,
-          status: task.status,
-          output: task.output,
-          truncated: task.truncated,
-          error:
-            task.status === "running"
-              ? "Execution is active or its outcome is uncertain; automatic retry is disabled"
-              : task.error,
-          startedAt: task.startedAt,
-          finishedAt: task.finishedAt,
+          planId: plan.planId,
+          status: plan.status,
+          results: plan.results,
+          error: plan.error,
+          startedAt: plan.startedAt,
+          finishedAt: plan.finishedAt,
         });
       } catch (error) {
         if (error instanceof DelegationRejected)
@@ -108,8 +101,8 @@ export function createDelegationTool(
     },
     {
       name: "delegate_task",
-      description: `Delegate one bounded task to a specialist when useful. Call this tool alone, at most once per user turn. Supply only necessary context. Available specialists: ${targets.map((target) => `${target.id}: ${target.description}`).join("; ")}`,
-      schema: DelegationRequestSchema,
+      description: `Delegate one bounded task plan when useful. Give every task a unique key, prerequisites and an expected result. Call this tool alone, at most once per user turn. Supply only necessary context. Available specialists: ${targets.map((target) => `${target.id}: ${target.description}`).join("; ")}`,
+      schema: DelegationPlanSchema,
     },
   );
 }

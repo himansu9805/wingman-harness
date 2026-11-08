@@ -21,7 +21,7 @@ export type PendingApproval = z.infer<typeof PendingApprovalSchema>;
 /** One parent interrupt transports a complete child approval batch. */
 export const DelegatedApprovalSchema = z.object({
   kind: z.literal("delegated_approvals"),
-  taskId: z.string().uuid(),
+  planId: z.string().uuid(),
   approvals: z.array(PendingApprovalSchema).min(1),
 });
 export type ApprovalPayload = CommandApproval | z.infer<typeof DelegatedApprovalSchema>;

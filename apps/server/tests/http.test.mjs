@@ -1395,3 +1395,65 @@ for (const approved of [true, false])
       assert.equal(metadata.turn.usage.totalTokens, 28);
     },
   );
+
+test(
+  "task plans stream distinct worker identities and aggregate child usage in the originating chat",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const { tsImport } = await import("tsx/esm/api");
+    const { createDelegationRuntime } = await tsImport(
+      "../../../tests/fixtures/delegation-runtime.mjs",
+      import.meta.url,
+    );
+    const plan = {
+      tasks: [
+        {
+          key: "research",
+          agentId: "analyst",
+          objective: "Research",
+          context: "",
+          expectedResult: "Findings",
+          dependsOn: [],
+        },
+        {
+          key: "compare",
+          agentId: "analyst",
+          objective: "Compare",
+          context: "",
+          expectedResult: "Comparison",
+          dependsOn: [],
+        },
+        {
+          key: "review",
+          agentId: "operator",
+          objective: "Review supplied findings",
+          context: "",
+          expectedResult: "Review",
+          dependsOn: ["research", "compare"],
+        },
+      ],
+    };
+    const f = await createDelegationRuntime({ plan });
+    const api = await server(t, f.agent);
+    t.after(() => f.runtime.close());
+    const frames = await api.stream("fresh/messages", { message: "delegate a plan" });
+    terminal(frames, "done");
+    const events = frames.filter((frame) => frame.type === "delegation");
+    assert.equal(events.length, 6);
+    assert.equal(new Set(events.map((event) => event.data.taskId)).size, 3);
+    assert.equal(new Set(events.map((event) => event.data.planId)).size, 1);
+    assert.deepEqual(
+      new Set(events.map((event) => event.data.planTaskKey)),
+      new Set(["research", "compare", "review"]),
+    );
+    const journal = await api.journal.listAfter("fresh", "0", 100);
+    const metadata = journal.filter((row) => row.payload.type === "run").at(-1).payload.metadata;
+    assert.equal(metadata.usage.modelCalls, 5);
+    assert.equal(metadata.usage.totalTokens, 35);
+    const [record] = await f.store.listPlans("fresh");
+    assert.equal(record.status, "completed");
+    assert.equal((await api.request("fresh", { method: "DELETE" })).status, 204);
+    assert.deepEqual(await f.store.listPlans("fresh"), []);
+    assert.deepEqual(await f.store.listConversation("fresh"), []);
+  },
+);
