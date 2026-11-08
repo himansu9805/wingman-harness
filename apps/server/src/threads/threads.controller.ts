@@ -3,12 +3,20 @@ import type { Response } from "express";
 import { eventFrame, writeSse } from "./sse";
 import { validateSequence } from "./thread-events.repository";
 import {
-  BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, Param, Post, Query, Res,
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+  Res,
 } from "@nestjs/common";
 import { AgentService } from "../agent/agent.service";
-import {
-  parse, ResumeBody, SendBody, ThreadId, ListQuery, HistoryQuery,
-} from "./schemas";
+import { parse, ResumeBody, SendBody, ThreadId, ListQuery, HistoryQuery } from "./schemas";
 
 @Controller("threads")
 export class ThreadsController {
@@ -46,28 +54,47 @@ export class ThreadsController {
 
   /** Replays the journal and polls for new rows without a replay/live handoff gap. */
   @Get(":threadId/events")
-  async events(@Param("threadId") rawId: string, @Headers("last-event-id") lastId: string | undefined, @Res() res: Response) {
+  async events(
+    @Param("threadId") rawId: string,
+    @Headers("last-event-id") lastId: string | undefined,
+    @Res() res: Response,
+  ) {
     const threadId = parse(ThreadId, rawId);
     await this.agent.requireThread(threadId);
     let cursor = "0";
     if (lastId !== undefined) {
       const prefix = `${threadId}:`;
-      if (!lastId.startsWith(prefix)) throw new BadRequestException("Event cursor belongs to another thread");
+      if (!lastId.startsWith(prefix))
+        throw new BadRequestException("Event cursor belongs to another thread");
       cursor = lastId.slice(prefix.length);
-      try { validateSequence(cursor); } catch { throw new BadRequestException("Invalid event cursor"); }
-      if (BigInt(cursor) > BigInt(await this.agent.events.latest(threadId))) throw new BadRequestException("Event cursor is ahead of this thread");
+      try {
+        validateSequence(cursor);
+      } catch {
+        throw new BadRequestException("Invalid event cursor");
+      }
+      if (BigInt(cursor) > BigInt(await this.agent.events.latest(threadId)))
+        throw new BadRequestException("Event cursor is ahead of this thread");
     }
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, this.agent.shutdownSignal]);
     const disconnect = () => controller.abort();
     res.once("close", disconnect);
     res.once("error", disconnect);
-    res.status(200).set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.status(200).set({
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
     res.flushHeaders();
     let heartbeatAt = Date.now();
     try {
       while (!signal.aborted) {
-        try { await this.agent.requireThread(threadId); } catch { break; }
+        try {
+          await this.agent.requireThread(threadId);
+        } catch {
+          break;
+        }
         const rows = await this.agent.events.listAfter(threadId, cursor, 100);
         for (const row of rows) {
           await writeSse(res, eventFrame(row), signal);
@@ -85,7 +112,8 @@ export class ThreadsController {
       // End the connection so the client reconnects from its last received ID.
     } finally {
       controller.abort();
-      res.off("close", disconnect); res.off("error", disconnect);
+      res.off("close", disconnect);
+      res.off("error", disconnect);
       res.end();
     }
   }
@@ -110,5 +138,4 @@ export class ThreadsController {
   pending(@Param("threadId") threadId: string) {
     return this.agent.pending(parse(ThreadId, threadId));
   }
-
 }

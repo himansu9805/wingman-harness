@@ -1,18 +1,18 @@
 import { TaskBusyError } from "../scheduler/management";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import {
-  cancelTask,
-  listTasks,
-  scheduleOnce,
-  scheduleRecurring,
-} from "../scheduler/scheduler";
+import { cancelTask, listTasks, scheduleOnce, scheduleRecurring } from "../scheduler/scheduler";
 import { getRecentRuns } from "../scheduler/results";
 
 const scheduleTask = tool(
   async ({ prompt, when }, config) => {
     try {
-      const id = await scheduleOnce(when, { prompt, ...(config.configurable?.scheduler_thread_id ? { threadId: String(config.configurable.scheduler_thread_id) } : {}) });
+      const id = await scheduleOnce(when, {
+        prompt,
+        ...(config.configurable?.scheduler_thread_id
+          ? { threadId: String(config.configurable.scheduler_thread_id) }
+          : {}),
+      });
       return `Scheduled task ${id} for ${when}. Tell the user what was scheduled and when.`;
     } catch (err) {
       return `Could not schedule task: ${(err as Error).message}`;
@@ -43,7 +43,12 @@ const scheduleTask = tool(
 const scheduleRecurringTask = tool(
   async ({ prompt, interval }, config) => {
     try {
-      const id = await scheduleRecurring(interval, { prompt, ...(config.configurable?.scheduler_thread_id ? { threadId: String(config.configurable.scheduler_thread_id) } : {}) });
+      const id = await scheduleRecurring(interval, {
+        prompt,
+        ...(config.configurable?.scheduler_thread_id
+          ? { threadId: String(config.configurable.scheduler_thread_id) }
+          : {}),
+      });
       return `Scheduled recurring task ${id} (${interval}). Tell the user what was scheduled and how often.`;
     } catch (err) {
       return `Could not schedule recurring task: ${(err as Error).message}`;
@@ -74,9 +79,7 @@ const scheduleRecurringTask = tool(
 const listScheduledTasks = tool(
   async () => {
     const tasks = await listTasks();
-    return tasks.length > 0
-      ? JSON.stringify(tasks, null, 2)
-      : "No tasks are scheduled.";
+    return tasks.length > 0 ? JSON.stringify(tasks, null, 2) : "No tasks are scheduled.";
   },
   {
     name: "list_scheduled_tasks",
@@ -91,9 +94,13 @@ const listScheduledTasks = tool(
 const cancelScheduledTask = tool(
   async ({ id }) => {
     try {
-      return (await cancelTask(id)) ? `Cancelled task ${id}.`
+      return (await cancelTask(id))
+        ? `Cancelled task ${id}.`
         : `No task found with ID ${id}. Call list_scheduled_tasks to see the current IDs.`;
-    } catch (error) { if (error instanceof TaskBusyError) return error.message; throw error; }
+    } catch (error) {
+      if (error instanceof TaskBusyError) return error.message;
+      throw error;
+    }
   },
   {
     name: "cancel_scheduled_task",
@@ -102,9 +109,7 @@ const cancelScheduledTask = tool(
       "call list_scheduled_tasks first if you don't have it. If several " +
       "tasks could match what the user means, ask which one.",
     schema: z.object({
-      id: z
-        .string()
-        .describe("The task ID exactly as list_scheduled_tasks returned it."),
+      id: z.string().describe("The task ID exactly as list_scheduled_tasks returned it."),
     }),
   },
 );

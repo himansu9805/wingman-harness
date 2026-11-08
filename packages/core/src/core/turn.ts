@@ -1,14 +1,38 @@
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
-import { Command, type Interrupt } from "@langchain/langgraph";
+import { Command } from "@langchain/langgraph";
 import type { Agent } from "./agent";
-import type { CommandApproval } from "../tools/bash";
 import { MEMORY_TOOL_NAMES } from "../tools/names";
 import { modelUsage, type ModelUsage } from "./usage";
 import { previewToolOutput } from "./tool-output";
+import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import {
+  DelegationStreamSchema,
+  type DelegationEvent,
+  type DelegationActivity,
+  type DelegationPlanSnapshot,
+} from "./delegation/types";
+import {
+  pendingApprovals,
+  approvalAnswers,
+  type NativeApproval,
+  type PendingApproval,
+} from "./approvals";
+export type { DelegationPlanSnapshot, DelegationTaskSnapshot } from "./delegation/types";
+export type { PendingApproval } from "./approvals";
 
+/** Routing state exists only on graphs configured with the router middleware. */
+const routeSchema = z.object({
+  choice: z.string(),
+  confidence: z.number(),
+  probabilities: z.record(z.string(), z.number()).optional(),
+});
 
 /** Something visible that happened during a turn. */
 export type TurnEvent =
+  | DelegationEvent
+  | DelegationActivity
+  | DelegationPlanSnapshot
   | {
       type: "route";
       choice: string;
@@ -31,7 +55,7 @@ export type TurnEvent =
 export type TurnEventHandler = (event: TurnEvent) => Promise<void>;
 
 /** Answers one approval request. */
-export type Decide = (request: CommandApproval) => Promise<boolean>;
+export type Decide = (request: PendingApproval) => Promise<boolean>;
 
 export interface TurnOptions {
   /** Aborts the turn when triggered. */
@@ -39,22 +63,22 @@ export interface TurnOptions {
   /** Awaited before processing the next event. */
   onEvent?: TurnEventHandler;
   /** Called once per newly generated model message, including tool requests. */
-  onModelUsage?: (usage: ModelUsage) => Promise<void>;
+  onModelUsage?: (
+    usage: ModelUsage,
+    messageId?: string,
+    source?: { taskId: string },
+  ) => Promise<void>;
   /** Bind server-created scheduled jobs to their catalogue thread. */
   schedulerThreadId?: string;
+  /** Internal child ownership, set only by the delegation runner. */
+  delegatedTaskId?: string;
 }
 
-/** A command waiting for the user's approval. */
-export interface PendingApproval {
-  id: string;
-  command: string;
-}
-
-type TurnInput = { messages: HumanMessage[] } | Command;
+type TurnInput = { messages: HumanMessage[] } | Command | null;
 
 export type TurnResult =
   | { kind: "done"; text: string }
-  | { kind: "paused"; interrupts: Interrupt<CommandApproval>[] };
+  | { kind: "paused"; approvals: PendingApproval[] };
 
 /**
  * Reports the tools requested by an AI message.
@@ -62,10 +86,7 @@ export type TurnResult =
  * @param message The AI message containing tool calls.
  * @param onEvent Receives one event per tool call.
  */
-async function emitToolCalls(
-  message: AIMessage,
-  onEvent: TurnEventHandler,
-): Promise<void> {
+async function emitToolCalls(message: AIMessage, onEvent: TurnEventHandler): Promise<void> {
   for (const call of message.tool_calls ?? []) {
     const identity = call.id ? { toolCallId: call.id } : {};
 
@@ -91,10 +112,7 @@ async function emitToolCalls(
 }
 
 /** Reports a bounded preview without changing the model's tool result. */
-async function emitToolResults(
-  messages: unknown[],
-  onEvent: TurnEventHandler,
-): Promise<void> {
+async function emitToolResults(messages: unknown[], onEvent: TurnEventHandler): Promise<void> {
   for (const message of messages) {
     if (!ToolMessage.isInstance(message)) continue;
 
@@ -121,39 +139,79 @@ export async function runTurn(
   agent: Agent,
   input: TurnInput,
   threadId: string,
-  { signal, onEvent = async () => {}, onModelUsage = async () => {}, schedulerThreadId }: TurnOptions,
+  {
+    signal,
+    onEvent = async () => {},
+    onModelUsage = async () => {},
+    schedulerThreadId,
+    delegatedTaskId,
+  }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
-    configurable: { thread_id: threadId, ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}) },
-    streamMode: "updates",
-    callbacks: [{ handleLLMError: async () => {
-      await onModelUsage({ inputTokens: null, outputTokens: null, totalTokens: null,
-        cachedInputTokens: null, reasoningOutputTokens: null });
-    } }],
+    configurable: {
+      thread_id: threadId,
+      agent_id: agent.id,
+      ...(delegatedTaskId ? { delegated_task_id: delegatedTaskId } : {}),
+      checkpoint_ns: "",
+      checkpoint_map: {},
+      ...(schedulerThreadId ? { scheduler_thread_id: schedulerThreadId } : {}),
+    },
+    streamMode: ["updates", "custom"],
+    callbacks: [
+      {
+        handleLLMError: async () => {
+          await onModelUsage({
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            cachedInputTokens: null,
+            reasoningOutputTokens: null,
+          });
+        },
+      },
+    ],
     signal,
   });
 
   let finalMessage: AIMessage | undefined;
   const usageMessageIds = new Set<string>();
-  const interrupts: Interrupt<CommandApproval>[] = [];
+  const delegatedUsageIds = new Set<string>();
+  const interrupts: NativeApproval[] = [];
 
-  for await (const update of stream) {
+  for await (const [mode, update] of stream) {
+    if (mode === "custom") {
+      const frame = DelegationStreamSchema.safeParse(update);
+      if (!frame.success) continue;
+      if (frame.data.type !== "delegation_usage") {
+        await onEvent(frame.data);
+      } else {
+        const key = `${frame.data.taskId}:${frame.data.index}`;
+        if (!delegatedUsageIds.has(key)) {
+          delegatedUsageIds.add(key);
+          await onModelUsage(frame.data.usage, undefined, { taskId: frame.data.taskId });
+        }
+      }
+      continue;
+    }
     const pending = (update as Record<string, unknown>).__interrupt__ as
-      | Interrupt<CommandApproval>[]
+      | NativeApproval[]
       | undefined;
     if (pending) {
       interrupts.push(...pending);
       continue;
     }
 
+    const routeUpdate = update["TypeSafeModelRouterMiddleware.before_agent"];
     const route =
-      update["TypeSafeModelRouterMiddleware.before_agent"]?.modelRoute;
-    if (route) {
+      routeUpdate && "modelRoute" in routeUpdate
+        ? routeSchema.safeParse(routeUpdate.modelRoute)
+        : undefined;
+    if (route?.success) {
       await onEvent({
         type: "route",
-        choice: route.choice,
-        confidence: route.confidence,
-        ...(route.probabilities ? { probabilities: route.probabilities } : {}),
+        choice: route.data.choice,
+        confidence: route.data.confidence,
+        ...(route.data.probabilities ? { probabilities: route.data.probabilities } : {}),
       });
     }
 
@@ -173,7 +231,7 @@ export async function runTurn(
     }
     if (!message.id || !usageMessageIds.has(message.id)) {
       if (message.id) usageMessageIds.add(message.id);
-      await onModelUsage(modelUsage(message));
+      await onModelUsage(modelUsage(message), message.id);
     }
     if (message.tool_calls && message.tool_calls.length > 0) {
       await emitToolCalls(message, onEvent);
@@ -182,7 +240,7 @@ export async function runTurn(
     }
   }
 
-  if (interrupts.length > 0) return { kind: "paused", interrupts };
+  if (interrupts.length > 0) return { kind: "paused", approvals: pendingApprovals(interrupts) };
   // `.text` flattens Responses API content blocks and plain strings alike.
   return { kind: "done", text: finalMessage?.text || "(no response)" };
 }
@@ -209,8 +267,8 @@ export async function runUntilDone(
   while (result.kind === "paused") {
     // Keyed by interrupt id, so parallel tool calls each get their own answer.
     const answers: Record<string, boolean> = {};
-    for (const it of result.interrupts) {
-      answers[it.id!] = await decide(it.value!);
+    for (const approval of result.approvals) {
+      answers[approval.id] = await decide(approval);
     }
     result = await resumeTurn(agent, answers, threadId, options);
   }
@@ -225,26 +283,50 @@ export async function runUntilDone(
  * @param threadId The conversation to clean up.
  * @param options Abort signal and event callback.
  */
-export async function declinePending(
-  agent: Agent,
-  threadId: string,
-  options: TurnOptions,
-) {
+export async function declinePending(agent: Agent, threadId: string, options: TurnOptions) {
+  await agent.cancelDelegations(threadId, options.onEvent);
   const pending = await getPendingApprovals(agent, threadId);
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    // Aborted executions may stop before an interrupt is checkpointed. Resolve
+    // their unanswered calls explicitly instead of replaying abandoned actions.
+    const state = await agent.app.graph.getState({ configurable: { thread_id: threadId } });
+    const messages: unknown[] = state.values?.messages ?? [];
+    const lastModel = [...messages].reverse().find(AIMessage.isInstance);
+    const answered = new Set(
+      messages
+        .slice(lastModel ? messages.lastIndexOf(lastModel) + 1 : 0)
+        .filter(ToolMessage.isInstance)
+        .map((message) => message.tool_call_id),
+    );
+    const missing =
+      lastModel?.tool_calls?.filter((call) => call.id && !answered.has(call.id)) ?? [];
+    if (missing.length)
+      await agent.app.graph.updateState(
+        { configurable: { thread_id: threadId } },
+        {
+          messages: missing.map(
+            (call) =>
+              new ToolMessage({
+                tool_call_id: call.id!,
+                name: call.name,
+                content: "Execution abandoned by a new user message; action was not replayed.",
+                status: "error",
+              }),
+          ),
+        },
+        "tools",
+      );
+    return;
+  }
   const answers = Object.fromEntries(pending.map((p) => [p.id, false]));
   let result = await resumeTurn(agent, answers, threadId, options);
   let remainingRounds = 24;
   while (result.kind === "paused") {
     options.signal.throwIfAborted();
     if (remainingRounds-- === 0) {
-      throw new Error(
-        "Approval cleanup exceeded 25 rounds; thread remains paused",
-      );
+      throw new Error("Approval cleanup exceeded 25 rounds; thread remains paused");
     }
-    const declines = Object.fromEntries(
-      result.interrupts.map((it) => [it.id!, false]),
-    );
+    const declines = Object.fromEntries(result.approvals.map((approval) => [approval.id, false]));
     result = await resumeTurn(agent, declines, threadId, options);
   }
 }
@@ -258,7 +340,7 @@ export function startTurn(
 ): Promise<TurnResult> {
   return runTurn(
     agent,
-    { messages: [new HumanMessage(message)] },
+    { messages: [new HumanMessage({ id: randomUUID(), content: message })] },
     threadId,
     options,
   );
@@ -269,24 +351,31 @@ export function startTurn(
  *
  * @param answers Approved or not, keyed by interrupt id.
  */
-export function resumeTurn(
+export async function resumeTurn(
   agent: Agent,
   answers: Record<string, boolean>,
   threadId: string,
   options: TurnOptions,
 ): Promise<TurnResult> {
-  return runTurn(agent, new Command({ resume: answers }), threadId, options);
+  const interrupts = await nativeApprovals(agent, threadId);
+  return runTurn(
+    agent,
+    new Command({ resume: approvalAnswers(interrupts, answers) }),
+    threadId,
+    options,
+  );
 }
 
-/** Lists the commands a thread is paused on, if any. */
+/** Reads native checkpoint interrupts; public approval IDs are derived from these values. */
+async function nativeApprovals(agent: Agent, threadId: string): Promise<NativeApproval[]> {
+  const state = await agent.app.graph.getState({ configurable: { thread_id: threadId } });
+  return state.tasks.flatMap((task) => (task.interrupts ?? []) as NativeApproval[]);
+}
+
+/** Lists direct and delegated approvals with their owning execution metadata. */
 export async function getPendingApprovals(
   agent: Agent,
   threadId: string,
 ): Promise<PendingApproval[]> {
-  const state = await agent.app.graph.getState({
-    configurable: { thread_id: threadId },
-  });
-  return state.tasks
-    .flatMap((t) => (t.interrupts ?? []) as Interrupt<CommandApproval>[])
-    .map((it) => ({ id: it.id!, command: it.value!.command }));
+  return pendingApprovals(await nativeApprovals(agent, threadId));
 }

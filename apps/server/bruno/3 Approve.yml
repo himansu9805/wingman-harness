@@ -1,5 +1,5 @@
 info:
-  name: Approve
+  name: Approve pending batch
   type: http
   seq: 3
 
@@ -10,7 +10,7 @@ http:
     type: json
     data: |-
       {
-        "answers": { "{{approvalId}}": true }
+        "answers": {{approvalAnswers}}
       }
   auth: inherit
 
@@ -31,3 +31,10 @@ settings:
   followRedirects: true
   maxRedirects: 5
   forwardAuthorizationHeader: true
+
+docs: |-
+  Run Pending and review every command and execution owner first.
+  This POST submits the captured exact batch. Edit the answers JSON for mixed decisions.
+  True permits that command; false declines it. The coordinator cannot answer for you.
+  Follow Events until the next approval or done/error; repeat Pending for another pause.
+  No automatic retry: stale/missing answers are rejected before execution.

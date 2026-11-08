@@ -1,3 +1,4 @@
+import { DelegationReporter, TurnAccounting } from "./delegation";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { randomUUID } from "node:crypto";
@@ -10,6 +11,7 @@ import {
   shutdown,
   runUntilDone,
   declinePending,
+  initializeRuntime,
   type Decide,
   type ScheduledEvent,
   type TurnEvent,
@@ -18,6 +20,7 @@ import {
 /** One thread per CLI session; saved threads would otherwise grow forever. */
 const THREAD_ID = `cli-${randomUUID()}`;
 
+const delegationReporter = new DelegationReporter((line) => console.log(line));
 let turnQueue: Promise<unknown> = Promise.resolve();
 
 /** Runs turns one at a time, in the order they arrive. */
@@ -34,6 +37,17 @@ function enqueueTurn<T>(fn: () => Promise<T>): Promise<T> {
  */
 async function printEvent(event: TurnEvent): Promise<void> {
   switch (event.type) {
+    case "delegation_plan":
+      delegationReporter.update(event);
+      break;
+    case "delegation":
+      if (event.planId) break;
+      console.log(`  🤝 ${event.agentId}: ${event.phase} [${event.taskId}]`);
+      break;
+    case "agent_activity":
+      console.log(`  [${event.agentId} · ${event.taskId}]`);
+      await printEvent(event.event);
+      break;
     case "route":
       console.log(`  🧭 ${formatRoute(event)}`);
       break;
@@ -44,9 +58,7 @@ async function printEvent(event: TurnEvent): Promise<void> {
       console.log(`  🧠 memory: ${event.name}(${JSON.stringify(event.args)})`);
       break;
     case "tool_call":
-      console.log(
-        `  🔧 tool called: ${event.name}(${JSON.stringify(event.args)})`,
-      );
+      console.log(`  🔧 tool called: ${event.name}(${JSON.stringify(event.args)})`);
       break;
     case "tool_result":
       console.log(
@@ -86,10 +98,11 @@ async function main() {
     `(models: fast ${settings.FAST_MODEL_NAME} · strong ${settings.STRONG_MODEL_NAME})\n`,
   );
 
+  const runtime = await initializeRuntime();
+  const agent = await Agent.create(runtime);
   const rl = readline.createInterface({ input: stdin, output: stdout });
   // Between questions, terminal redraws must not display readline's default "> ".
   rl.setPrompt("");
-  const agent = await Agent.create();
 
   // In a TTY, readline owns Ctrl+C (raw mode), so process-level SIGINT never
   // fires. Ctrl+C cancels the in-flight turn, or exits when at the prompt.
@@ -111,9 +124,9 @@ async function main() {
   // declines whatever was left pending.
   const askAtTerminal =
     (signal: AbortSignal): Decide =>
-    async ({ command }) => {
+    async ({ command, execution }) => {
       const answer = await rl.question(
-        ` ▶️ Execute command: "${command}"? [y/N]: `,
+        ` ▶️ [${delegationReporter.owner(execution.taskId, execution.agentId)}] Execute command: "${command}"? [y/N]: `,
         { signal },
       );
       return ["y", "yes"].includes(answer.trim().toLowerCase());
@@ -129,6 +142,7 @@ async function main() {
       console.log(`⏰ scheduled task ${event.jobId}: ${event.prompt}`);
       turnController = new AbortController();
       const startedAt = new Date();
+      const accounting = new TurnAccounting();
       try {
         // Without this framing, a firing "remind me…" prompt reads like a new
         // request: the model schedules or lists tasks instead of doing it.
@@ -142,13 +156,13 @@ async function main() {
           `action you can't do in your reply. Don't schedule, list or cancel ` +
           `tasks. Nobody may be at the keyboard, so commands that need ` +
           `approval will be declined.`;
-        const options = { signal: turnController.signal, onEvent: printEvent };
+        const options = accounting.options(turnController.signal, printEvent);
         await declinePending(agent, event.threadId, options);
         const output = await runUntilDone(
           agent,
           message,
           event.threadId,
-          declineAll,
+          accounting.decide(declineAll),
           options,
         );
         console.log(`● ${output}\n`);
@@ -160,20 +174,17 @@ async function main() {
           finishedAt: new Date(),
         });
       } catch (err) {
-        const status = turnController?.signal.aborted
-          ? "interrupted"
-          : "failed";
+        const status = turnController?.signal.aborted ? "interrupted" : "failed";
         await recordRun({
           ...event,
           status,
           error: (err as Error).message,
           startedAt,
           finishedAt: new Date(),
-        }).catch((e) =>
-          console.warn(`[scheduler] Could not record run: ${e.message}`),
-        );
+        }).catch((e) => console.warn(`[scheduler] Could not record run: ${e.message}`));
         throw err;
       } finally {
+        console.log(accounting.summary());
         turnController = null;
         if (atPrompt) rl.prompt(true); // redraw "> " and whatever was typed
       }
@@ -198,15 +209,16 @@ async function main() {
 
       await enqueueTurn(async () => {
         turnController = new AbortController();
+        const accounting = new TurnAccounting();
         try {
           const { signal } = turnController;
-          const options = { signal, onEvent: printEvent };
+          const options = accounting.options(signal, printEvent);
           await declinePending(agent, THREAD_ID, options);
           const text = await runUntilDone(
             agent,
             input,
             THREAD_ID,
-            askAtTerminal(signal),
+            accounting.decide(askAtTerminal(signal)),
             options,
           );
           console.log(`● ${text}\n`);
@@ -217,6 +229,7 @@ async function main() {
             console.log(`● [turn failed: ${(err as Error).message}]\n`);
           }
         } finally {
+          console.log(accounting.summary());
           turnController = null;
         }
       });

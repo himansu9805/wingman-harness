@@ -16,36 +16,62 @@ export class TurnRunner {
   private readonly mutations = new Set<Promise<unknown>>();
   private stopping = false;
   private readonly shutdown = new AbortController();
-  get shutdownSignal(): AbortSignal { return this.shutdown.signal; }
+  get shutdownSignal(): AbortSignal {
+    return this.shutdown.signal;
+  }
 
   private reserve(threadId: string) {
     if (this.stopping) throw new ServiceUnavailableException("Server is shutting down");
-    if (this.busy.has(threadId)) throw new ConflictException("A turn is already running on this thread");
+    if (this.busy.has(threadId))
+      throw new ConflictException("A turn is already running on this thread");
     this.busy.add(threadId);
   }
 
-  async accept(threadId: string, prepare: () => Promise<(runId: string, signal: AbortSignal) => Promise<void>>) {
+  async accept(
+    threadId: string,
+    prepare: () => Promise<(runId: string, signal: AbortSignal) => Promise<void>>,
+  ) {
     this.reserve(threadId);
     const runId = randomUUID();
     const controller = new AbortController();
     let resolve!: () => void;
     let reject!: (error: unknown) => void;
-    const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    const completion = new Promise<void>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
     const active = { runId, controller, completion };
     this.active.set(threadId, active);
-    const release = () => { this.active.delete(threadId); this.busy.delete(threadId); };
+    const release = () => {
+      this.active.delete(threadId);
+      this.busy.delete(threadId);
+    };
     try {
       const run = await prepare();
       controller.signal.throwIfAborted();
-      void Promise.resolve().then(() => run(runId, controller.signal)).then(
-        () => { release(); resolve(); },
-        error => { release(); reject(error); },
-      );
+      void Promise.resolve()
+        .then(() => run(runId, controller.signal))
+        .then(
+          () => {
+            release();
+            resolve();
+          },
+          (error) => {
+            release();
+            reject(error);
+          },
+        );
       // Attach a handler even when no scheduler/client awaits completion.
-      completion.catch(error => this.logger.error(`Run ${runId} failed: ${error instanceof Error ? error.message : String(error)}`));
+      completion.catch((error) =>
+        this.logger.error(
+          `Run ${runId} failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
       return { runId, completion };
     } catch (error) {
-      release(); resolve(); throw error;
+      release();
+      resolve();
+      throw error;
     }
   }
 
@@ -53,7 +79,12 @@ export class TurnRunner {
     this.reserve(threadId);
     const completion = Promise.resolve().then(run);
     this.mutations.add(completion);
-    try { return await completion; } finally { this.mutations.delete(completion); this.busy.delete(threadId); }
+    try {
+      return await completion;
+    } finally {
+      this.mutations.delete(completion);
+      this.busy.delete(threadId);
+    }
   }
 
   async close(): Promise<void> {
@@ -61,6 +92,6 @@ export class TurnRunner {
     this.shutdown.abort();
     const runs = [...this.active.values()];
     for (const run of runs) run.controller.abort(new Error("Server is shutting down"));
-    await Promise.allSettled([...runs.map(run => run.completion), ...this.mutations]);
+    await Promise.allSettled([...runs.map((run) => run.completion), ...this.mutations]);
   }
 }

@@ -90,11 +90,7 @@ export class GraphMemory {
    * @param relation The relationship type or label.
    * @param toName The name of the target entity.
    */
-  async upsertRelation(
-    fromName: string,
-    relation: string,
-    toName: string,
-  ): Promise<void> {
+  async upsertRelation(fromName: string, relation: string, toName: string): Promise<void> {
     await this.run(
       `MATCH (a:Entity {name: $fromName}), (b:Entity {name: $toName})
       MERGE (a)-[r:RELATES_TO {relation: $relation}]->(b)`,
@@ -160,11 +156,8 @@ export class GraphMemory {
       ([type, names]) => `${type}:\n${names.map((n) => `- ${n}`).join("\n")}`,
     );
     return [
-      "# Memory",
-      "Long-term memory holds facts about the names below. Only the names are",
-      "shown here. To see the facts, call recall_memory with one name copied",
-      "exactly as written (without the leading '- '). Don't guess facts from",
-      "the names alone.",
+      "# Memory index",
+      "Stored entity names grouped by type. Names alone do not establish facts.",
       "",
       ...sections,
     ].join("\n");
@@ -176,22 +169,26 @@ export class GraphMemory {
    * @param summary The summary of the conversation.
    * @param entityNames The names of entities associated with the conversation.
    */
-  async recordConversation(
-    summary: string,
-    entityNames: string[],
-  ): Promise<void> {
+  async recordConversation(summary: string, entityNames: string[]): Promise<void> {
     const conversationName = `conversation-${Date.now()}`;
     await this.upsertEntity(conversationName, "conversation", summary);
     for (const entityName of entityNames) {
-      const existing = await this.run(
-        `MATCH (e:Entity {name: $name}) RETURN e.name AS name`,
-        { name: entityName },
-      );
+      const existing = await this.run(`MATCH (e:Entity {name: $name}) RETURN e.name AS name`, {
+        name: entityName,
+      });
       if (existing.length === 0) {
         await this.upsertEntity(entityName, "topic", "");
       }
       await this.upsertRelation(conversationName, "about", entityName);
     }
+  }
+
+  /** Closes existing memory without creating a database during shutdown. */
+  static async closeInstance(): Promise<void> {
+    const instance = GraphMemory.instance;
+    GraphMemory.instance = null;
+
+    await instance?.closeGraph();
   }
 
   /**

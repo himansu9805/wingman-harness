@@ -13,7 +13,11 @@ import { THREAD_REPOSITORY, PostgresThreadRepository } from "./threads/thread.re
   providers: [
     AgentService,
     TurnRunner,
-    { provide: THREAD_EVENTS, useFactory: () => new PostgresThreadEventsRepository(process.env.POSTGRES_CONNECTION_STRING ?? "") },
+    {
+      provide: THREAD_EVENTS,
+      useFactory: () =>
+        new PostgresThreadEventsRepository(process.env.POSTGRES_CONNECTION_STRING ?? ""),
+    },
     { provide: AGENT_RUNTIME, useValue: agentRuntime },
     {
       provide: THREAD_REPOSITORY,

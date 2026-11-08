@@ -15,17 +15,20 @@
     "dev:server": "npm run build -w @wingman/core && concurrently -k -n core,server \"npm run dev -w @wingman/core\" \"npm run dev -w @wingman/server\"",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run build -w @wingman/core && npm run test --workspaces --if-present",
-    "test:postgres": "npm run build -w @wingman/core && npm run test:postgres -w @wingman/server",
-    "dev:web": "npm run dev -w @wingman/web"
+    "test:postgres": "npm run build -w @wingman/core && npm run test:postgres -w @wingman/core && npm run test:postgres -w @wingman/server",
+    "dev:web": "npm run dev -w @wingman/web",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
   },
   "keywords": [],
   "author": "",
   "devDependencies": {
     "@types/node": "^26.5.1",
+    "concurrently": "^9.0.0",
+    "oxfmt": "0.77.0",
     "tsup": "^8.5.0",
     "tsx": "^4.23.13",
-    "typescript": "^7.0.2",
-    "concurrently": "^9.0.0"
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "tsup": {

@@ -1,28 +1,47 @@
-import { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
-import { tool } from '@langchain/core/tools';
-import { interrupt, MemorySaver } from '@langchain/langgraph';
-import { createAgent } from 'langchain';
-import { z } from 'zod';
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
+import { tool } from "@langchain/core/tools";
+import { interrupt, MemorySaver } from "@langchain/langgraph";
+import { createAgent } from "langchain";
+import { z } from "zod";
 
 // Deterministic model: actual LangChain tool loop, without a network endpoint.
 class ApprovalModel extends BaseChatModel {
-  _llmType() { return 'approval-test'; }
-  bindTools() { return this; }
+  _llmType() {
+    return "approval-test";
+  }
+  bindTools() {
+    return this;
+  }
   async _generate(messages) {
     const humanIndex = messages.findLastIndex(HumanMessage.isInstance);
     const text = messages[humanIndex].text;
     // Understand the server framing while retaining deterministic tool decisions.
-    const request = text.match(/^This task was scheduled earlier and is due now: ([^\n]+)/)?.[1] ?? text;
+    const request =
+      text.match(/^This task was scheduled earlier and is due now: ([^\n]+)/)?.[1] ?? text;
     const results = messages.slice(humanIndex + 1).filter(ToolMessage.isInstance);
     let calls = [];
-    if (request.startsWith('run') && results.length === 0) {
-      calls = [{ name: 'test_action', args: { command: 'test-1' }, id: 'call-1', type: 'tool_call' }];
-      if (request === 'run two') calls.push({ name: 'test_action', args: { command: 'test-2' }, id: 'call-2', type: 'tool_call' });
-    } else if (request === 'run twice' && results.length === 1) {
-      calls = [{ name: 'test_action', args: { command: 'test-2' }, id: 'call-2', type: 'tool_call' }];
+    if (request.startsWith("run") && results.length === 0) {
+      calls = [
+        { name: "test_action", args: { command: "test-1" }, id: "call-1", type: "tool_call" },
+      ];
+      if (request === "run two")
+        calls.push({
+          name: "test_action",
+          args: { command: "test-2" },
+          id: "call-2",
+          type: "tool_call",
+        });
+    } else if (request === "run twice" && results.length === 1) {
+      calls = [
+        { name: "test_action", args: { command: "test-2" }, id: "call-2", type: "tool_call" },
+      ];
     }
-    const message = new AIMessage({ content: calls.length ? '' : results.length ? results.map(m => m.text).join(', ') : request, tool_calls: calls, ...(this.usage ? { usage_metadata: this.usage } : {}) });
+    const message = new AIMessage({
+      content: calls.length ? "" : results.length ? results.map((m) => m.text).join(", ") : request,
+      tool_calls: calls,
+      ...(this.usage ? { usage_metadata: this.usage } : {}),
+    });
     return { generations: [{ text: message.text, message }] };
   }
 }
@@ -30,13 +49,36 @@ class ApprovalModel extends BaseChatModel {
 /** A real agent/checkpointer with a harmless, observable tool side effect. */
 export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } = {}) {
   const executions = [];
-  const action = tool(async ({ command }) => {
-    const approved = interrupt({ kind: 'bash_approval', command });
-    if (approved !== true) return 'declined';
-    executions.push(command);
-    return `executed ${command}`;
-  }, { name: 'test_action', description: 'Test action requiring approval', schema: z.object({ command: z.string() }) });
+  const action = tool(
+    async ({ command }, runtime) => {
+      const approved = interrupt({
+        kind: "bash_approval",
+        command,
+        execution: {
+          agentId: runtime.config.configurable.agent_id,
+          taskId: runtime.config.configurable.delegated_task_id ?? null,
+          toolCallId: runtime.toolCallId,
+        },
+      });
+      if (approved !== true) return "declined";
+      executions.push(command);
+      return `executed ${command}`;
+    },
+    {
+      name: "test_action",
+      description: "Test action requiring approval",
+      schema: z.object({ command: z.string() }),
+    },
+  );
   const model = new ApprovalModel({});
   model.usage = usage;
-  return { agent: { app: createAgent({ model, tools: [action], checkpointer }) }, executions };
+  return {
+    agent: {
+      id: "default",
+      async cancelDelegations() {},
+      async deleteDelegatedState() {},
+      app: createAgent({ model, tools: [action], checkpointer }),
+    },
+    executions,
+  };
 }

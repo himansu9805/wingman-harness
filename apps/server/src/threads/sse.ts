@@ -13,7 +13,9 @@ export async function writeSse(res: Response, frame: string, signal: AbortSignal
   await new Promise<void>((resolve, reject) => {
     const finish = (error?: unknown) => {
       clearTimeout(timer);
-      res.off("drain", drain); res.off("close", closed); res.off("error", failed);
+      res.off("drain", drain);
+      res.off("close", closed);
+      res.off("error", failed);
       signal.removeEventListener("abort", aborted);
       error ? reject(error) : resolve();
     };
@@ -22,7 +24,9 @@ export async function writeSse(res: Response, frame: string, signal: AbortSignal
     const failed = (error: Error) => finish(error);
     const aborted = () => finish(signal.reason);
     const timer = setTimeout(() => finish(new Error("Event stream client is too slow")), 10_000);
-    res.once("drain", drain); res.once("close", closed); res.once("error", failed);
+    res.once("drain", drain);
+    res.once("close", closed);
+    res.once("error", failed);
     signal.addEventListener("abort", aborted, { once: true });
     if (signal.aborted) aborted();
     else if (res.destroyed) closed();

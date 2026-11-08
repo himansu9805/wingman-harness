@@ -209,12 +209,12 @@ streaming events, approvals, thread listing, history and deletion. A
 Detailed documentation lives in the [wiki](https://github.com/himansu9805/wingman-harness/wiki)
 throughout pre-release development. A detailed `docs/` directory is planned for v1.0.0.
 
-| Topic | Page |
-| --- | --- |
-| Setup | [Getting Started](https://github.com/himansu9805/wingman-harness/wiki/Getting-Started) · [Configuration](https://github.com/himansu9805/wingman-harness/wiki/Configuration) |
+| Topic         | Page                                                                                                                                                                                                                                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setup         | [Getting Started](https://github.com/himansu9805/wingman-harness/wiki/Getting-Started) · [Configuration](https://github.com/himansu9805/wingman-harness/wiki/Configuration)                                                                                                            |
 | Using Wingman | [HTTP API](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API) · [Command Approval and Security](https://github.com/himansu9805/wingman-harness/wiki/Command-Approval-and-Security) · [Scheduled Tasks](https://github.com/himansu9805/wingman-harness/wiki/Scheduled-Tasks) |
-| Extending | [Writing Skills](https://github.com/himansu9805/wingman-harness/wiki/Writing-Skills) · [MCP Servers](https://github.com/himansu9805/wingman-harness/wiki/MCP-Servers) · [Memory](https://github.com/himansu9805/wingman-harness/wiki/Memory) |
-| Internals | [Architecture](https://github.com/himansu9805/wingman-harness/wiki/Architecture) · [Development](https://github.com/himansu9805/wingman-harness/wiki/Development) · [Troubleshooting](https://github.com/himansu9805/wingman-harness/wiki/Troubleshooting) |
+| Extending     | [Writing Skills](https://github.com/himansu9805/wingman-harness/wiki/Writing-Skills) · [MCP Servers](https://github.com/himansu9805/wingman-harness/wiki/MCP-Servers) · [Memory](https://github.com/himansu9805/wingman-harness/wiki/Memory)                                           |
+| Internals     | [Architecture](https://github.com/himansu9805/wingman-harness/wiki/Architecture) · [Development](https://github.com/himansu9805/wingman-harness/wiki/Development) · [Troubleshooting](https://github.com/himansu9805/wingman-harness/wiki/Troubleshooting)                             |
 
 ## Security
 

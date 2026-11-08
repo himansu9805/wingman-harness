@@ -1,14 +1,20 @@
-import { HStack } from '@astryxdesign/core/Layout';
-import { Text } from '@astryxdesign/core/Text';
-import { Tooltip } from '@astryxdesign/core/Tooltip';
-import * as stylex from '@stylexjs/stylex';
-import type { RunMetadata } from '../api/run-metadata';
-import { runSummary, usageDetails } from '../state/run-summary';
+import { HStack } from "@astryxdesign/core/Layout";
+import { Text } from "@astryxdesign/core/Text";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import * as stylex from "@stylexjs/stylex";
+import type { RunMetadata } from "../api/run-metadata";
+import { runSummary, usageDetails } from "../state/run-summary";
 
 export function RunSummary({ run }: { run: RunMetadata }) {
-  if (run.status === 'running') return null;
-  return <HStack gap={2} vAlign="center" xstyle={styles.footer}>
-    <Text type="supporting">{runSummary(run).join(' · ')}</Text>
-  </HStack>;
+  if (run.status === "running") return null;
+  return (
+    <HStack gap={2} vAlign="center" xstyle={styles.footer}>
+      <Tooltip content={<Text type="supporting">{usageDetails(run)}</Text>}>
+        <Text type="supporting" tabIndex={0}>
+          {runSummary(run).join(" · ")}
+        </Text>
+      </Tooltip>
+    </HStack>
+  );
 }
-const styles = stylex.create({ footer: { marginTop: 'var(--spacing-3)' } });
+const styles = stylex.create({ footer: { marginTop: "var(--spacing-3)" } });

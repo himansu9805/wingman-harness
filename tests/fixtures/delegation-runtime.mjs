@@ -1,0 +1,164 @@
+import "../setup.mjs";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import { MemorySaver } from "@langchain/langgraph";
+import { createMiddleware } from "langchain";
+import { CoreRuntime } from "../../packages/core/src/core/runtime.ts";
+import { Agent } from "../../packages/core/src/core/agent.ts";
+import {
+  createDefaultAgentDefinition,
+  analystAgentDefinition,
+  operatorAgentDefinition,
+} from "../../packages/core/src/core/agents/defaults.ts";
+import { createLocalTools } from "../../packages/core/src/tools/tools.ts";
+import { MemoryDelegationStore } from "../../packages/core/src/core/delegation/store.ts";
+
+class DelegationModel extends BaseChatModel {
+  constructor(
+    trace,
+    child,
+    args,
+    boundTools = [],
+    summarize = (result) => `Coordinator: ${result.text}`,
+  ) {
+    super({});
+    Object.assign(this, { trace, child, args, boundTools, summarize });
+  }
+  _llmType() {
+    return "durable-delegation-test";
+  }
+  bindTools(tools) {
+    return new DelegationModel(this.trace, this.child, this.args, tools, this.summarize);
+  }
+  async _generate(messages, options) {
+    const prompt = messages
+      .filter(SystemMessage.isInstance)
+      .map((message) => message.text)
+      .join("\n");
+    const child = prompt.includes("# Agent: analyst") || prompt.includes("# Agent: operator");
+    this.trace.calls.push({
+      child,
+      messages,
+      prompt,
+      tools: this.boundTools.map((tool) => tool.name),
+    });
+    let response;
+    if (child) response = await this.child(messages, options);
+    else {
+      const lastUser = messages.findLastIndex(HumanMessage.isInstance);
+      const result = messages.slice(lastUser + 1).find(ToolMessage.isInstance);
+      response = result
+        ? this.summarize(result)
+        : messages[lastUser].text.startsWith("simple")
+          ? "Direct response"
+          : [
+              {
+                id: "delegate-call",
+                name: "delegate_task",
+                args: this.args,
+                type: "tool_call",
+              },
+            ];
+    }
+    const message = new AIMessage({
+      content: Array.isArray(response) ? "" : response,
+      tool_calls: Array.isArray(response) ? response : [],
+      usage_metadata: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+    });
+    return { generations: [{ text: message.text, message }] };
+  }
+}
+
+export async function createDelegationRuntime({
+  store = new MemoryDelegationStore(),
+  saver = new MemorySaver(),
+  plan,
+  delegationConcurrency = 4,
+  maxConcurrency = 2,
+  maxTasks = 8,
+  operatorTools = [],
+  summarize,
+  child = async () => "Specialist analysis",
+  timeoutMs = 30000,
+  maxModelCalls = 8,
+  args = {
+    agentId: "analyst",
+    objective: "Compare supplied options",
+    context: "Only this scoped context",
+  },
+} = {}) {
+  const trace = { calls: [], memory: 0 };
+  const model = new DelegationModel(
+    trace,
+    child,
+    plan ?? { tasks: [{ key: "task", ...args, expectedResult: "Concise answer", dependsOn: [] }] },
+    [],
+    summarize,
+  );
+  const definition = createDefaultAgentDefinition();
+  definition.delegation.timeoutMs = timeoutMs;
+  definition.delegation.maxModelCalls = maxModelCalls;
+  definition.delegation.maxConcurrency = maxConcurrency;
+  definition.delegation.maxTasks = maxTasks;
+  const runtime = await CoreRuntime.create({
+    async openMcp() {
+      return {
+        serverIds: [],
+        privateServerIds() {
+          return [];
+        },
+        async getTools() {
+          return [];
+        },
+        async close() {},
+      };
+    },
+    async loadSkills() {
+      return [];
+    },
+    async loadConfiguration() {
+      return {
+        delegationConcurrency,
+        definitions: [
+          definition,
+          analystAgentDefinition,
+          operatorTools.length
+            ? {
+                ...operatorAgentDefinition,
+                capabilities: {
+                  ...operatorAgentDefinition.capabilities,
+                  useGlobalTools: operatorTools.map((tool) => tool.name),
+                },
+              }
+            : operatorAgentDefinition,
+        ],
+        globalTools: [...createLocalTools([]), ...operatorTools],
+        models: {
+          fast: model,
+          powerful: model,
+          routingMiddleware: createMiddleware({
+            name: "TestRouter",
+            wrapModelCall: (request, handler) => handler(request),
+          }),
+        },
+      };
+    },
+    async openCheckpointer() {
+      return { saver, async close() {} };
+    },
+    async openDelegations() {
+      return store;
+    },
+    async readSkill() {
+      throw new Error("No skills granted");
+    },
+    async getMemoryIndex() {
+      trace.memory++;
+      return "ROOT PRIVATE MEMORY";
+    },
+    async stopScheduler() {},
+    async closeResults() {},
+    async closeMemory() {},
+  });
+  return { runtime, agent: await Agent.create(runtime), trace, store, saver };
+}

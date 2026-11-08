@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { tool } from "@langchain/core/tools";
+import { tool, type ToolRuntime } from "@langchain/core/tools";
+import { commandApproval, type CommandApproval } from "../core/approvals";
+export type { CommandApproval } from "../core/approvals";
 import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
 import { parse } from "shell-quote";
@@ -13,11 +15,6 @@ const RULESET = {
   allow: ["docker ps", "docker ps *", "git status", "git log *", "ls *", "pwd"],
   deny: ["rm *", "sudo *", "shutdown *", "reboot *", "kill *", "killall *"],
 };
-
-export interface CommandApproval {
-  kind: "bash_approval";
-  command: string;
-}
 
 /** Catches shell constructs that shell-quote otherwise preserves as text. */
 function hasUnsupportedSyntax(command: string): boolean {
@@ -90,7 +87,7 @@ export function checkCommand(argv: string[]): Verdict {
 }
 
 const executeBashCommand = tool(
-  async ({ command }) => {
+  async ({ command }, runtime: ToolRuntime) => {
     const argv = toArgv(command);
     if (!argv) {
       return JSON.stringify({
@@ -111,10 +108,7 @@ const executeBashCommand = tool(
     if (verdict === "ask") {
       // Pauses the run here. On resume the tool reruns from the top, and
       // interrupt() returns the value passed to Command({ resume }).
-      const approved = interrupt<CommandApproval, boolean>({
-        kind: "bash_approval",
-        command,
-      });
+      const approved = interrupt<CommandApproval, boolean>(commandApproval(command, runtime));
       if (!approved) {
         return JSON.stringify({
           error:
@@ -130,6 +124,7 @@ const executeBashCommand = tool(
       // Execute the bash command (timeout capped at 30 seconds)
       const { stdout, stderr } = await execFilePromise(file, args, {
         timeout: 30000,
+        signal: runtime.config.signal,
       });
       return JSON.stringify({
         stdout: stdout || "",
