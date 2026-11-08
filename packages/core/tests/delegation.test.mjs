@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { HumanMessage } from "@langchain/core/messages";
 import { createDelegationRuntime } from "../../../tests/fixtures/delegation-runtime.mjs";
-import { startTurn, runTurn } from "../src/core/turn.ts";
-import { deleteThreadState, getThreadMessages } from "../src/core/history.ts";
+import { startTurn, runTurn } from "../src/conversations/turn.ts";
+import { deleteThreadState, getThreadMessages } from "../src/conversations/history.ts";
 import { createHash } from "node:crypto";
-import { DelegationRunner } from "../src/core/delegation/runner.ts";
+import { DelegationRunner } from "../src/delegation/runner.ts";
 
 const options = () => ({ signal: AbortSignal.timeout(10_000) });
 const identity = {

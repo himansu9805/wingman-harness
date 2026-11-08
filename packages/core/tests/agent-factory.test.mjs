@@ -1,4 +1,4 @@
-import { MemoryDelegationStore } from "../src/core/delegation/store.ts";
+import { MemoryDelegationStore } from "../src/delegation/storage/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
@@ -7,17 +7,17 @@ import { tool } from "@langchain/core/tools";
 import { MemorySaver } from "@langchain/langgraph";
 import { createMiddleware } from "langchain";
 import { z } from "zod";
-import { Agent } from "../src/core/agent.ts";
-import { CoreRuntime } from "../src/core/runtime.ts";
+import { Agent } from "../src/agents/agent.ts";
+import { CoreRuntime } from "../src/runtime/runtime.ts";
 import {
   analystAgentDefinition,
   operatorAgentDefinition,
   createDefaultAgentDefinition,
-} from "../src/core/agents/defaults.ts";
-import { createLocalTools, createLoadSkillTool } from "../src/tools/tools.ts";
-import { startTurn, resumeTurn } from "../src/core/turn.ts";
+} from "../src/agents/builtins/index.ts";
+import { createLocalTools, createLoadSkillTool } from "../src/capabilities/catalogue.ts";
+import { startTurn, resumeTurn } from "../src/conversations/turn.ts";
 import { GraphMemory } from "../src/memory/graph.ts";
-import { buildSystemPrompt } from "../src/core/prompt.ts";
+import { buildSystemPrompt } from "../src/agents/prompt.ts";
 
 class RecordingModel extends BaseChatModel {
   constructor(label, trace, respond, boundTools = []) {

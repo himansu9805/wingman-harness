@@ -7,10 +7,10 @@ import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { MemorySaver } from "@langchain/langgraph";
 import { createAgent } from "langchain";
-import { bashTools } from "../src/tools/bash.ts";
-import { createDefaultAgentDefinition } from "../src/core/agents/defaults.ts";
-import { buildSystemPrompt } from "../src/core/prompt.ts";
-import { startTurn, resumeTurn, getPendingApprovals } from "../src/core/turn.ts";
+import { bashTools } from "../src/capabilities/commands.ts";
+import { createDefaultAgentDefinition } from "../src/agents/builtins/index.ts";
+import { buildSystemPrompt } from "../src/agents/prompt.ts";
+import { startTurn, resumeTurn, getPendingApprovals } from "../src/conversations/turn.ts";
 
 // Script only the model's choice to call the tool. The production shell tool,
 // graph, checkpoints, approval interrupts and execution all remain real.

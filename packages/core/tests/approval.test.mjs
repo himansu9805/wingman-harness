@@ -7,7 +7,7 @@ import {
   runUntilDone,
   getPendingApprovals,
   declinePending,
-} from "../src/core/turn.ts";
+} from "../src/conversations/turn.ts";
 const opts = () => ({ signal: new AbortController().signal });
 
 test("a real graph pauses before a side effect and approval executes once", async () => {

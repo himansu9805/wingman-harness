@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { validatePlan } from "../src/core/delegation/plan.ts";
-import { WorkerSlots } from "../src/core/delegation/slots.ts";
+import { validatePlan } from "../src/delegation/plan.ts";
+import { WorkerSlots } from "../src/delegation/slots.ts";
 import { createDelegationRuntime } from "../../../tests/fixtures/delegation-runtime.mjs";
 const task = (key, dependsOn = []) => ({
   key,
@@ -70,7 +70,7 @@ import {
   getPendingApprovals,
   runTurn,
   declinePending,
-} from "../src/core/turn.ts";
+} from "../src/conversations/turn.ts";
 const options = () => ({ signal: AbortSignal.timeout(10000) });
 const taskData = (messages) =>
   JSON.parse(messages.find(HumanMessage.isInstance).text.split("\n").slice(1).join("\n"));

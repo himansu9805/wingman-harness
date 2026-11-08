@@ -3,10 +3,15 @@ import { randomUUID, createHash } from "node:crypto";
 import { test } from "node:test";
 import pg from "pg";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import { PostgresDelegationStore } from "../../src/core/delegation/postgres-store.ts";
+import { PostgresDelegationStore } from "../../src/delegation/storage/postgres.ts";
 import { createDelegationRuntime } from "../../../../tests/fixtures/delegation-runtime.mjs";
-import { startTurn, runTurn, getPendingApprovals, resumeTurn } from "../../src/core/turn.ts";
-import { deleteThreadState } from "../../src/core/history.ts";
+import {
+  startTurn,
+  runTurn,
+  getPendingApprovals,
+  resumeTurn,
+} from "../../src/conversations/turn.ts";
+import { deleteThreadState } from "../../src/conversations/history.ts";
 
 const connectionString = process.env.TEST_POSTGRES_CONNECTION_STRING;
 if (!connectionString)

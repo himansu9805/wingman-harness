@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { McpConnectionManager, openMcpConnections } from "../src/mcp/mcp.ts";
+import { McpConnectionManager, openMcpConnections } from "../src/integrations/mcp/client.ts";
 
 function getGlobalTools(manager, grants) {
   return manager.getTools("default", { useGlobalMcpServers: grants, mcp: [] });

@@ -1,4 +1,4 @@
-import { closeRuntime } from "./core/runtime";
+import { closeRuntime } from "./runtime/runtime";
 
 /**
  * Releases shared services after the caller has drained interactive turns.

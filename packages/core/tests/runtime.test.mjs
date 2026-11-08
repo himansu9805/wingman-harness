@@ -1,8 +1,8 @@
-import { MemoryDelegationStore } from "../src/core/delegation/store.ts";
+import { MemoryDelegationStore } from "../src/delegation/storage/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MemorySaver } from "@langchain/langgraph";
-import { CoreRuntime, initializeRuntime, closeRuntime } from "../src/core/runtime.ts";
+import { CoreRuntime, initializeRuntime, closeRuntime } from "../src/runtime/runtime.ts";
 
 function fixture({ closeMcp, ...overrides } = {}) {
   const calls = [];
@@ -32,10 +32,11 @@ function fixture({ closeMcp, ...overrides } = {}) {
     },
     async loadConfiguration(skills) {
       calls.push("configuration");
-      const { createLocalTools } = await import("../src/tools/tools.ts");
+      const { createLocalTools } = await import("../src/capabilities/catalogue.ts");
       const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } =
-        await import("../src/core/agents/defaults.ts");
-      const { fastModel, strongModel, modelRouter } = await import("../src/core/router.ts");
+        await import("../src/agents/builtins/index.ts");
+      const { fastModel, strongModel, modelRouter } =
+        await import("../src/integrations/models/router.ts");
       return {
         definitions: [
           createDefaultAgentDefinition(),
@@ -202,7 +203,7 @@ test("scheduled turns retain memory access while draining", async () => {
 });
 
 test("two agent graphs reuse the same checkpoint store", async () => {
-  const { Agent } = await import("../src/core/agent.ts");
+  const { Agent } = await import("../src/agents/agent.ts");
   const { calls, dependencies } = fixture();
   const runtime = await CoreRuntime.create(dependencies);
 

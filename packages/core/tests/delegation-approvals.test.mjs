@@ -11,9 +11,9 @@ import {
   getPendingApprovals,
   declinePending,
   runTurn,
-} from "../src/core/turn.ts";
-import { Agent } from "../src/core/agent.ts";
-import { DelegationRunner } from "../src/core/delegation/runner.ts";
+} from "../src/conversations/turn.ts";
+import { Agent } from "../src/agents/agent.ts";
+import { DelegationRunner } from "../src/delegation/runner.ts";
 
 const options = () => ({ signal: AbortSignal.timeout(10000) });
 const args = { agentId: "operator", objective: "Run approved commands", context: "" };
@@ -270,7 +270,7 @@ test("known tool results are reused when a worker checkpoint is replayed before 
     const [task] = await f.store.listConversation("ledger");
     assert.equal(task.status, "running");
     assert.equal(task.tools[0].status, "completed");
-    const { executionMiddleware } = await import("../src/core/delegation/execution.ts");
+    const { executionMiddleware } = await import("../src/delegation/execution.ts");
     const worker = await Agent.create(f.runtime, "operator", [
       executionMiddleware(f.store, task.taskId, task.ownerToken, 8),
     ]);

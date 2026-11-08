@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { createApprovalAgent } from "../../../tests/fixtures/approval-agent.mjs";
-import { getThreadMessages, deleteThreadState } from "../src/core/history.ts";
-import { previewToolOutput } from "../src/core/tool-output.ts";
-import { startTurn, resumeTurn, getPendingApprovals } from "../src/core/turn.ts";
+import { getThreadMessages, deleteThreadState } from "../src/conversations/history.ts";
+import { previewToolOutput } from "../src/conversations/tool-output.ts";
+import { startTurn, resumeTurn, getPendingApprovals } from "../src/conversations/turn.ts";
 
 const opts = () => ({ signal: new AbortController().signal });
 const call = (id) => ({ id, name: "action", args: { command: id }, type: "tool_call" });
