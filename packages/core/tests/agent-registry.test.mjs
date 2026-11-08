@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AgentRegistry } from "../src/core/agents/registry.ts";
+import { AgentRegistry } from "../src/agents/registry.ts";
 import {
   createDefaultAgentDefinition,
   analystAgentDefinition,
-} from "../src/core/agents/defaults.ts";
-import { AgentToolCatalogue } from "../src/core/agents/catalogue.ts";
+} from "../src/agents/builtins/index.ts";
+import { AgentToolCatalogue } from "../src/agents/catalogue.ts";
 
 function registry() {
   return new AgentRegistry({

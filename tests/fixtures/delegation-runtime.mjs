@@ -3,15 +3,15 @@ import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { MemorySaver } from "@langchain/langgraph";
 import { createMiddleware } from "langchain";
-import { CoreRuntime } from "../../packages/core/src/core/runtime.ts";
-import { Agent } from "../../packages/core/src/core/agent.ts";
+import { CoreRuntime } from "../../packages/core/src/runtime/runtime.ts";
+import { Agent } from "../../packages/core/src/agents/agent.ts";
 import {
   createDefaultAgentDefinition,
   analystAgentDefinition,
   operatorAgentDefinition,
-} from "../../packages/core/src/core/agents/defaults.ts";
-import { createLocalTools } from "../../packages/core/src/tools/tools.ts";
-import { MemoryDelegationStore } from "../../packages/core/src/core/delegation/store.ts";
+} from "../../packages/core/src/agents/builtins/index.ts";
+import { createLocalTools } from "../../packages/core/src/capabilities/catalogue.ts";
+import { MemoryDelegationStore } from "../../packages/core/src/delegation/storage/store.ts";
 
 class DelegationModel extends BaseChatModel {
   constructor(
@@ -77,6 +77,7 @@ export async function createDelegationRuntime({
   maxConcurrency = 2,
   maxTasks = 8,
   operatorTools = [],
+  executionResources = [],
   summarize,
   child = async () => "Specialist analysis",
   timeoutMs = 30000,
@@ -119,6 +120,7 @@ export async function createDelegationRuntime({
     async loadConfiguration() {
       return {
         delegationConcurrency,
+        executionResources,
         definitions: [
           definition,
           analystAgentDefinition,

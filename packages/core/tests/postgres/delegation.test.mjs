@@ -3,10 +3,15 @@ import { randomUUID, createHash } from "node:crypto";
 import { test } from "node:test";
 import pg from "pg";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import { PostgresDelegationStore } from "../../src/core/delegation/postgres-store.ts";
+import { PostgresDelegationStore } from "../../src/delegation/storage/postgres.ts";
 import { createDelegationRuntime } from "../../../../tests/fixtures/delegation-runtime.mjs";
-import { startTurn, runTurn, getPendingApprovals, resumeTurn } from "../../src/core/turn.ts";
-import { deleteThreadState } from "../../src/core/history.ts";
+import {
+  startTurn,
+  runTurn,
+  getPendingApprovals,
+  resumeTurn,
+} from "../../src/conversations/turn.ts";
+import { deleteThreadState } from "../../src/conversations/history.ts";
 
 const connectionString = process.env.TEST_POSTGRES_CONNECTION_STRING;
 if (!connectionString)
@@ -190,6 +195,7 @@ test(
     assert.equal(completed.modelCalls, 2);
     assert.equal(completed.tools[0].status, "completed");
     assert.ok(completed.tools[0].result);
+    assert.equal(completed.tools[0].requestedUrl, null);
 
     // Row locking allows exactly one owner to transition an approval batch.
     const contestInput = {
@@ -325,6 +331,7 @@ test(
     const snapshots = observed.filter((event) => event.type === "delegation_plan");
     assert.equal(snapshots.at(-1).planId, pausedPlan.planId);
     assert.equal(snapshots.at(-1).status, "completed");
+    assert(snapshots.at(-1).tasks.some((task) => task.observations.length > 0));
     assert.equal(
       snapshots.at(-1).tasks.reduce((sum, task) => sum + task.usage.modelCalls, 0),
       4,

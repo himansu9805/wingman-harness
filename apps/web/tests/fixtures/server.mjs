@@ -21,7 +21,7 @@ const { createDelegationRuntime } = await tsImport(
   import.meta.url,
 );
 const { commandApproval } = await tsImport(
-  "../../../../packages/core/src/core/approvals.ts",
+  "../../../../packages/core/src/conversations/approvals.ts",
   import.meta.url,
 );
 const demoCheck = tool(

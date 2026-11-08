@@ -8,7 +8,7 @@ import {
   runUntilDone,
   getPendingApprovals,
   declinePending,
-} from "../src/core/turn.ts";
+} from "../src/conversations/turn.ts";
 
 const options = () => ({ signal: new AbortController().signal });
 const approval = (id) => ({

@@ -4,8 +4,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { loadSkillContent, renderSkillIndex } from "../src/skills/skills.ts";
-import { createLoadSkillTool } from "../src/tools/tools.ts";
+import { loadSkillContent, renderSkillIndex } from "../src/skills/catalogue.ts";
+import { createLoadSkillTool } from "../src/capabilities/catalogue.ts";
 
 test("scoped skill loader reads selected metadata and strips frontmatter", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "wingman-skills-"));
@@ -23,7 +23,7 @@ test("scoped skill loader reads selected metadata and strips frontmatter", async
 
 test("loading tool modules does not initialize the graph database", () => {
   const memory = new URL("../src/memory/graph.ts", import.meta.url).href;
-  const tools = new URL("../src/tools/tools.ts", import.meta.url).href;
+  const tools = new URL("../src/capabilities/catalogue.ts", import.meta.url).href;
   const source = `
     const { GraphMemory } = await import(${JSON.stringify(memory)});
     GraphMemory.getInstance = () => { throw new Error('Unexpected memory initialization'); };

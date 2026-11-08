@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { planSnapshot } from "../src/core/delegation/observation.ts";
+import { planSnapshot } from "../src/delegation/observation.ts";
 import { createDelegationRuntime } from "../../../tests/fixtures/delegation-runtime.mjs";
-import { startTurn, resumeTurn } from "../src/core/turn.ts";
+import { startTurn, resumeTurn } from "../src/conversations/turn.ts";
 import { ToolMessage } from "@langchain/core/messages";
 const task = (key, dependsOn = []) => ({
   key,

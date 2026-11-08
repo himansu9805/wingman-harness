@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { checkCommand, toArgv } from "../src/tools/bash.ts";
+import { checkCommand, toArgv } from "../src/capabilities/commands.ts";
 
 describe("toArgv", () => {
   for (const [command, expected] of [
