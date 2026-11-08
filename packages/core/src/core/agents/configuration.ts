@@ -28,10 +28,10 @@ export interface AgentConfiguration {
 export async function loadAgentConfiguration(skills: readonly SkillMeta[]): Promise<AgentConfiguration> {
   const { createLocalTools } = await import("../../tools/tools");
   const { fastModel, strongModel, modelRouter } = await import("../router");
-  const { createDefaultAgentDefinition, analystAgentDefinition } = await import("./defaults");
+  const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } = await import("./defaults");
   const { settings } = await import("../../settings");
   return {
-    definitions: [createDefaultAgentDefinition(settings.SCHEDULER_ENABLED), analystAgentDefinition],
+    definitions: [createDefaultAgentDefinition(settings.SCHEDULER_ENABLED), analystAgentDefinition, operatorAgentDefinition],
     globalTools: createLocalTools(skills),
     models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
   };

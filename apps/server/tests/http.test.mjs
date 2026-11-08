@@ -161,7 +161,7 @@ function terminal(frames, type) {
 }
 
 function fakeAgent(run) {
-  return { app: {
+  return { id: 'default', async cancelDelegations() {}, app: {
     graph: { getState: async () => ({ tasks: [] }) },
     stream: async function* (input, options) { for await (const update of run(input, options)) yield ["updates", update]; },
   } };
@@ -271,7 +271,7 @@ test('simultaneous duplicate resume returns 409 and executes the command once', 
   const release = deferred();
   t.after(() => release.resolve());
   const app = fixture.agent.app;
-  const agent = { app: {
+  const agent = { ...fixture.agent, app: {
     graph: app.graph,
     stream: async (input, options) => {
       if (!Array.isArray(input.messages)) {
@@ -847,4 +847,39 @@ test('delegation progress and usage are journaled in the parent chat and replaye
   assert.equal((await api.request('fresh', { method: 'DELETE' })).status, 204);
   assert.deepEqual(await f.store.listConversation('fresh'), []);
   assert.equal(await f.saver.getTuple({ configurable: { thread_id: task.checkpointThreadId } }), undefined);
+});
+
+for (const approved of [true, false]) test(`delegated approvals round-trip through the existing APIs (${approved})`, { timeout: TIMEOUT }, async t => {
+  const { tsImport } = await import('tsx/esm/api');
+  const { createDelegationRuntime } = await tsImport('../../../tests/fixtures/delegation-runtime.mjs', import.meta.url);
+  const { ToolMessage } = await import('@langchain/core/messages');
+  const f = await createDelegationRuntime({
+    args: { agentId: 'operator', objective: 'Check uptime', context: '' },
+    child: async messages => {
+      const result = messages.find(ToolMessage.isInstance);
+      return result ? result.text : [{ id: 'worker-command', name: 'exec_bash_command', args: { command: 'uptime' }, type: 'tool_call' }];
+    },
+  });
+  const api = await server(t, f.agent);
+  t.after(() => f.runtime.close());
+  const frames = await api.stream('fresh/messages', { message: 'delegate uptime' });
+  const { approvals } = terminal(frames, 'approval');
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].execution.agentId, 'operator');
+  assert.equal(approvals[0].execution.toolCallId, 'worker-command');
+  const [task] = await f.store.listConversation('fresh');
+  assert.equal(approvals[0].execution.taskId, task.taskId);
+  assert.deepEqual(await api.json('fresh/pending'), approvals);
+  await api.json('fresh/resume', { body: { answers: { wrong: true } } }, 400);
+  assert.deepEqual(await api.json('fresh/pending'), approvals);
+  const resumed = await api.stream('fresh/resume', { answers: { [approvals[0].id]: approved } });
+  const done = terminal(resumed, 'done');
+  assert.match(done.text, approved ? /exit_code/ : /Declined/);
+  assert.deepEqual(await api.json('fresh/pending'), []);
+  await api.json('fresh/resume', { body: { answers: { [approvals[0].id]: true } } }, 409);
+  const journal = await api.journal.listAfter('fresh', '0', 100);
+  assert.ok(journal.some(row => row.payload.type === 'agent_activity' && row.payload.agentId === 'operator'));
+  const metadata = journal.filter(row => row.payload.type === 'run').at(-1).payload.metadata;
+  assert.equal(metadata.turn.usage.modelCalls, 4);
+  assert.equal(metadata.turn.usage.totalTokens, 28);
 });

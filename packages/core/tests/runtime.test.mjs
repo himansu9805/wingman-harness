@@ -29,10 +29,10 @@ function fixture({ closeMcp, ...overrides } = {}) {
     async loadConfiguration(skills) {
       calls.push("configuration");
       const { createLocalTools } = await import("../src/tools/tools.ts");
-      const { createDefaultAgentDefinition, analystAgentDefinition } = await import("../src/core/agents/defaults.ts");
+      const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } = await import("../src/core/agents/defaults.ts");
       const { fastModel, strongModel, modelRouter } = await import("../src/core/router.ts");
       return {
-        definitions: [createDefaultAgentDefinition(), analystAgentDefinition],
+        definitions: [createDefaultAgentDefinition(), analystAgentDefinition, operatorAgentDefinition],
         globalTools: createLocalTools(skills),
         models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
       };

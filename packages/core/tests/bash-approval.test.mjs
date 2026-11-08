@@ -28,7 +28,7 @@ class ShellModel extends BaseChatModel {
 }
 
 function agent() {
-  return { app: createAgent({ model: new ShellModel({}), tools: bashTools, checkpointer: new MemorySaver(), systemPrompt: buildSystemPrompt({ definition: createDefaultAgentDefinition(), toolNames: ['exec_bash_command'], memoryIndex: '', skillIndex: '' }) }) };
+  return { id: 'default', app: createAgent({ model: new ShellModel({}), tools: bashTools, checkpointer: new MemorySaver(), systemPrompt: buildSystemPrompt({ definition: createDefaultAgentDefinition(), toolNames: ['exec_bash_command'], memoryIndex: '', skillIndex: '' }) }) };
 }
 
 const options = () => ({ signal: AbortSignal.timeout(10_000) });

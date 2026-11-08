@@ -30,13 +30,13 @@ class ApprovalModel extends BaseChatModel {
 /** A real agent/checkpointer with a harmless, observable tool side effect. */
 export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } = {}) {
   const executions = [];
-  const action = tool(async ({ command }) => {
-    const approved = interrupt({ kind: 'bash_approval', command });
+  const action = tool(async ({ command }, runtime) => {
+    const approved = interrupt({ kind: 'bash_approval', command, execution: { agentId: runtime.config.configurable.agent_id, taskId: runtime.config.configurable.delegated_task_id ?? null, toolCallId: runtime.toolCallId } });
     if (approved !== true) return 'declined';
     executions.push(command);
     return `executed ${command}`;
   }, { name: 'test_action', description: 'Test action requiring approval', schema: z.object({ command: z.string() }) });
   const model = new ApprovalModel({});
   model.usage = usage;
-  return { agent: { async deleteDelegatedState() {}, app: createAgent({ model, tools: [action], checkpointer }) }, executions };
+  return { agent: { id: 'default', async cancelDelegations() {}, async deleteDelegatedState() {}, app: createAgent({ model, tools: [action], checkpointer }) }, executions };
 }

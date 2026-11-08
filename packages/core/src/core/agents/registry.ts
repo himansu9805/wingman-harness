@@ -7,7 +7,7 @@ export type { AgentCapabilitiesCatalog } from "./catalogue";
 export type RegisteredAgentDefinition = Readonly<
   Omit<AgentDefinition, "capabilities" | "delegation">
 > & {
-  readonly delegation: { readonly agents: readonly string[]; readonly timeoutMs: number };
+  readonly delegation: { readonly agents: readonly string[]; readonly maxModelCalls: number; readonly timeoutMs: number };
   readonly capabilities: {
     readonly useGlobalTools: readonly string[];
     readonly tools: readonly string[];

@@ -9,7 +9,7 @@ import { createMiddleware } from "langchain";
 import { z } from "zod";
 import { Agent } from "../src/core/agent.ts";
 import { CoreRuntime } from "../src/core/runtime.ts";
-import { analystAgentDefinition, createDefaultAgentDefinition } from "../src/core/agents/defaults.ts";
+import { analystAgentDefinition, operatorAgentDefinition, createDefaultAgentDefinition } from "../src/core/agents/defaults.ts";
 import { createLocalTools, createLoadSkillTool } from "../src/tools/tools.ts";
 import { startTurn, resumeTurn } from "../src/core/turn.ts";
 import { GraphMemory } from "../src/memory/graph.ts";
@@ -205,7 +205,7 @@ test("empty installed skill catalogue does not expose load_skill", async () => {
 test("default graph preserves production shell approval and resume", async () => {
   const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('phase2b')")}`;
   const { runtime, trace } = await fixture({
-    definitions: [createDefaultAgentDefinition(), analystAgentDefinition],
+    definitions: [createDefaultAgentDefinition(), analystAgentDefinition, operatorAgentDefinition],
     globalTools: createLocalTools([]),
     respond(messages) {
       const result = messages.filter(ToolMessage.isInstance).at(-1);
@@ -218,7 +218,7 @@ test("default graph preserves production shell approval and resume", async () =>
     const agent = await Agent.create(runtime);
     const paused = await startTurn(agent, "run harmless command", "shell-thread", options());
     assert.equal(paused.kind, "paused");
-    const answers = Object.fromEntries(paused.interrupts.map(item => [item.id, true]));
+    const answers = Object.fromEntries(paused.approvals.map(item => [item.id, true]));
     const completed = await resumeTurn(agent, answers, "shell-thread", options());
     assert.equal(completed.kind, "done");
     assert.match(completed.text, /phase2b/);

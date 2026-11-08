@@ -38,6 +38,10 @@ async function printEvent(event: TurnEvent): Promise<void> {
     case "delegation":
       console.log(`  🤝 ${event.agentId}: ${event.phase} [${event.taskId}]`);
       break;
+    case "agent_activity":
+      console.log(`  [${event.agentId} · ${event.taskId}]`);
+      await printEvent(event.event);
+      break;
     case "route":
       console.log(`  🧭 ${formatRoute(event)}`);
       break;
@@ -116,9 +120,9 @@ async function main() {
   // declines whatever was left pending.
   const askAtTerminal =
     (signal: AbortSignal): Decide =>
-    async ({ command }) => {
+    async ({ command, execution }) => {
       const answer = await rl.question(
-        ` ▶️ Execute command: "${command}"? [y/N]: `,
+        ` ▶️ [${execution.agentId}] Execute command: "${command}"? [y/N]: `,
         { signal },
       );
       return ["y", "yes"].includes(answer.trim().toLowerCase());

@@ -35,8 +35,9 @@ export const AgentDefinitionSchema = z
     model: z.enum(["routed", "fast", "powerful"]),
     delegation: z.object({
       agents: toolSelection.default([]),
+      maxModelCalls: z.number().int().min(1).max(100).default(8),
       timeoutMs: z.number().int().min(1).max(120000).default(30000),
-    }).strict().default({ agents: [], timeoutMs: 30000 }),
+    }).strict().default({ agents: [], timeoutMs: 30000, maxModelCalls: 8 }),
 
     capabilities: z
       .object({

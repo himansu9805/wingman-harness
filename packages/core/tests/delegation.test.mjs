@@ -111,12 +111,12 @@ test('persisted uncertain work is not restarted by another runner', async () => 
   const f = await createDelegationRuntime();
   try {
     const hash = createHash('sha256').update(JSON.stringify(request)).digest('hex');
-    await f.store.claim({ ...identity, request, requestHash: hash });
+    const { task } = await f.store.claim({ ...identity, parentAgentId: 'default', request, requestHash: hash });
+    await f.store.update(task.taskId, current => ({ ...current, attempt: 1, ownerToken: '00000000-0000-4000-8000-000000000001', leaseExpiresAt: new Date(Date.now() + 30000).toISOString() }));
     const frames = [];
     const replacement = new DelegationRunner(f.runtime.agents, f.store,
       async () => { throw new Error('Must not run an uncertain task'); }, async () => {});
-    const blocked = await replacement.run('default', request, identity, { emit: frame => frames.push(frame) });
-    assert.equal(blocked.status, 'running');
+    await assert.rejects(replacement.run('default', request, identity, { emit: frame => frames.push(frame) }), /owned by another/);
     assert.equal(frames[0].phase, 'blocked');
     await replacement.close();
     assert.equal(f.trace.calls.length, 0);

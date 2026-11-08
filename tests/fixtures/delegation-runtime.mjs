@@ -5,7 +5,7 @@ import { MemorySaver } from '@langchain/langgraph';
 import { createMiddleware } from 'langchain';
 import { CoreRuntime } from '../../packages/core/src/core/runtime.ts';
 import { Agent } from '../../packages/core/src/core/agent.ts';
-import { createDefaultAgentDefinition, analystAgentDefinition } from '../../packages/core/src/core/agents/defaults.ts';
+import { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } from '../../packages/core/src/core/agents/defaults.ts';
 import { createLocalTools } from '../../packages/core/src/tools/tools.ts';
 import { MemoryDelegationStore } from '../../packages/core/src/core/delegation/store.ts';
 
@@ -15,7 +15,7 @@ class DelegationModel extends BaseChatModel {
   bindTools(tools) { return new DelegationModel(this.trace, this.child, this.args, tools); }
   async _generate(messages, options) {
     const prompt = messages.filter(SystemMessage.isInstance).map(message => message.text).join('\n');
-    const child = prompt.includes('# Agent: analyst');
+    const child = (prompt.includes('# Agent: analyst') || prompt.includes('# Agent: operator'));
     this.trace.calls.push({ child, messages, prompt, tools: this.boundTools.map(tool => tool.name) });
     let response;
     if (child) response = await this.child(messages, options);
@@ -37,18 +37,19 @@ class DelegationModel extends BaseChatModel {
 
 export async function createDelegationRuntime({
   store = new MemoryDelegationStore(), saver = new MemorySaver(),
-  child = async () => 'Specialist analysis', timeoutMs = 30000,
+  operatorTools = [], child = async () => 'Specialist analysis', timeoutMs = 30000, maxModelCalls = 8,
   args = { agentId: 'analyst', objective: 'Compare supplied options', context: 'Only this scoped context' },
 } = {}) {
   const trace = { calls: [], memory: 0 };
   const model = new DelegationModel(trace, child, args);
   const definition = createDefaultAgentDefinition();
   definition.delegation.timeoutMs = timeoutMs;
+  definition.delegation.maxModelCalls = maxModelCalls;
   const runtime = await CoreRuntime.create({
     async openMcp() { return { serverIds: [], privateServerIds() { return []; }, async getTools() { return []; }, async close() {} }; },
     async loadSkills() { return []; },
     async loadConfiguration() { return {
-      definitions: [definition, analystAgentDefinition], globalTools: createLocalTools([]),
+      definitions: [definition, analystAgentDefinition, operatorTools.length ? { ...operatorAgentDefinition, capabilities: { ...operatorAgentDefinition.capabilities, useGlobalTools: operatorTools.map(tool => tool.name) } } : operatorAgentDefinition], globalTools: [...createLocalTools([]), ...operatorTools],
       models: { fast: model, powerful: model, routingMiddleware: createMiddleware({ name: 'TestRouter', wrapModelCall: (request, handler) => handler(request) }) },
     }; },
     async openCheckpointer() { return { saver, async close() {} }; },

@@ -1,4 +1,4 @@
-import { createAgent, dynamicSystemPromptMiddleware } from "langchain";
+import { createAgent, dynamicSystemPromptMiddleware, type AnyAgentMiddleware } from "langchain";
 import { buildSystemPrompt } from "./prompt";
 import type { CoreRuntime } from "./runtime";
 import type { RegisteredAgentDefinition } from "./agents/registry";
@@ -10,6 +10,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 async function buildAgentGraph(
   runtime: CoreRuntime,
   definition: RegisteredAgentDefinition,
+  execution: readonly AnyAgentMiddleware[] = [],
 ) {
   runtime.assertOpen();
   const capabilities = definition.capabilities;
@@ -44,9 +45,9 @@ async function buildAgentGraph(
     skillIndex,
   }));
   if (definition.model === "routed") {
-    return createAgent({ ...parameters, middleware: [runtime.models.routingMiddleware, prompt] as const });
+    return createAgent({ ...parameters, middleware: [runtime.models.routingMiddleware, prompt, ...execution] as const });
   }
-  return createAgent({ ...parameters, middleware: [prompt] as const });
+  return createAgent({ ...parameters, middleware: [prompt, ...execution] as const });
 }
 
 /** A role-specific graph borrowing services owned by its application runtime. */
@@ -62,6 +63,11 @@ export class Agent {
     return this.runtime.delegations.deleteConversation(conversationId);
   }
 
+  /** Cancels unfinished workers before abandoning a parent turn. */
+  cancelDelegations(conversationId: string): Promise<void> {
+    return this.runtime.delegations.cancelConversation(conversationId);
+  }
+
   /**
    * Builds a validated agent graph. Unknown IDs fail before MCP discovery.
    * Independent executions must use distinct checkpoint thread IDs; delegated
@@ -69,11 +75,12 @@ export class Agent {
    *
    * @param runtime The application-owned services and validated role registry.
    * @param agentId Registered role ID; existing entry points use "default".
+   * @param execution Trusted worker middleware for durable budgets and tool outcomes.
    * @throws If the role is unknown, discovery fails, or shutdown has started.
    */
-  static async create(runtime: CoreRuntime, agentId = "default"): Promise<Agent> {
+  static async create(runtime: CoreRuntime, agentId = "default", execution: readonly AnyAgentMiddleware[] = []): Promise<Agent> {
     runtime.assertOpen();
     const definition = runtime.agents.get(agentId);
-    return new Agent(definition.id, await buildAgentGraph(runtime, definition), runtime);
+    return new Agent(definition.id, await buildAgentGraph(runtime, definition, execution), runtime);
   }
 }

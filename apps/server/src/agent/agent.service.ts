@@ -186,7 +186,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       await this.threads.touch(threadId);
       await finish(result.kind === "paused" ? "paused" : "completed");
       await this.events.append(threadId, runId, result.kind === "paused"
-        ? { type: "approval", approvals: result.interrupts.map(it => ({ id: it.id!, command: it.value!.command })) }
+        ? { type: "approval", approvals: result.approvals }
         : { type: "done", text: result.text });
       return result;
     } catch (error) {

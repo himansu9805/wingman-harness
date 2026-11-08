@@ -19,7 +19,7 @@ export function ApprovalCard({ approvals, busy, submit }: {
       <VStack gap={4}>
         {approvals.map((approval, index) => (
           <VStack key={approval.id} gap={2}>
-            <CodeBlock language="bash" title={`Command ${index + 1}`} code={approval.command} />
+            <CodeBlock language="bash" title={`${approval.execution.agentId} · Command ${index + 1}`} code={approval.command} />
             <HStack gap={2} wrap="wrap">
               <Button label="Approve" variant={answers[approval.id] === true ? 'primary' : 'secondary'} isDisabled={busy} onClick={() => choose(approval.id, true)} />
               <Button label="Deny" variant="secondary" isDisabled={busy} onClick={() => choose(approval.id, false)} />

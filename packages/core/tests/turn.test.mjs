@@ -4,16 +4,17 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { runTurn, startTurn, resumeTurn, runUntilDone, getPendingApprovals, declinePending } from '../src/core/turn.ts';
 
 const options = () => ({ signal: new AbortController().signal });
-const approval = (id) => ({ id, value: { kind: 'bash_approval', command: id } });
+const approval = (id) => ({ id, value: { kind: 'bash_approval', command: id, execution: { agentId: 'default', taskId: null, toolCallId: id } } });
 function streamed(...batches) {
   const inputs = [];
-  return { inputs, app: {
+  let pending = [];
+  return { id: 'default', inputs, async cancelDelegations() {}, app: {
     async stream(input, config) {
       inputs.push({ input, config });
       const updates = batches.shift() ?? [];
-      return (async function* () { for (const update of updates) yield ["updates", update]; })();
+      return (async function* () { for (const update of updates) { pending = update.__interrupt__ ?? []; yield ["updates", update]; } })();
     },
-    graph: { async getState() { return { tasks: [] }; } },
+    graph: { async getState() { return { tasks: pending.length ? [{ interrupts: pending }] : [] }; } },
   } };
 }
 const reply = text => ({ model_request: { messages: [new AIMessage(text)] } });
@@ -54,7 +55,7 @@ test('runTurn emits route, tool, skill and memory events and consumes the whole 
 test('interrupts take precedence over a provisional final message', async () => {
   const pending = [approval('a'), approval('b')];
   const agent = streamed([reply('provisional'), { __interrupt__: pending }]);
-  assert.deepEqual(await startTurn(agent, 'x', 't', options()), { kind: 'paused', interrupts: pending });
+  assert.deepEqual(await startTurn(agent, 'x', 't', options()), { kind: 'paused', approvals: pending.map(item => ({ id: item.id, command: item.value.command, execution: item.value.execution })) });
 });
 
 test('empty stream returns the documented fallback', async () => {
@@ -63,6 +64,7 @@ test('empty stream returns the documented fallback', async () => {
 
 test('resumeTurn sends answers by interrupt id', async () => {
   const agent = streamed([reply('finished')]);
+  agent.app.graph.getState = async () => ({ tasks: [{ interrupts: [approval('a'), approval('b')] }] });
   await resumeTurn(agent, { a: true, b: false }, 't', options());
   assert.deepEqual(agent.inputs[0].input.resume, { a: true, b: false });
 });
@@ -79,7 +81,7 @@ test('runUntilDone handles parallel approvals followed by another pause', async 
 test('pending approvals are flattened across tasks', async () => {
   const agent = streamed();
   agent.app.graph.getState = async () => ({ tasks: [{ interrupts: [approval('a')] }, {}, { interrupts: [approval('b')] }] });
-  assert.deepEqual(await getPendingApprovals(agent, 't'), [{ id: 'a', command: 'a' }, { id: 'b', command: 'b' }]);
+  assert.deepEqual(await getPendingApprovals(agent, 't'), ['a', 'b'].map(id => ({ id, command: id, execution: { agentId: 'default', taskId: null, toolCallId: id } })));
 });
 
 test('declinePending leaves a clean thread alone', async () => {
@@ -297,4 +299,23 @@ test('delegation custom frames await persistence and deduplicate child usage bef
     onModelUsage: async item => { writes.push(item.totalTokens); },
   });
   assert.deepEqual(writes, ['delegation', 7, null]);
+});
+
+test('abandoning an interrupted call resolves only the current use of a reused provider tool ID', async () => {
+  const saved = [];
+  const agent = streamed();
+  agent.app.graph.getState = async () => ({ tasks: [], values: { messages: [
+    new HumanMessage('old question'),
+    new AIMessage({ content: '', tool_calls: [{ id: 'reused', name: 'action', args: {} }] }),
+    new ToolMessage({ tool_call_id: 'reused', content: 'old result' }),
+    new HumanMessage('new question'),
+    new AIMessage({ content: '', tool_calls: [{ id: 'reused', name: 'action', args: {} }] }),
+  ] } });
+  agent.app.graph.updateState = async (_config, update, node) => { saved.push({ update, node }); };
+  await declinePending(agent, 'aborted', options());
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].node, 'tools');
+  assert.equal(saved[0].update.messages[0].tool_call_id, 'reused');
+  assert.match(saved[0].update.messages[0].text, /not replayed/);
+  assert.equal(agent.inputs.length, 0);
 });

@@ -10,7 +10,7 @@ test('a real graph pauses before a side effect and approval executes once', asyn
   assert.equal(paused.kind, 'paused');
   assert.deepEqual(executions, []);
   const pending = await getPendingApprovals(agent, 'approve');
-  assert.equal(pending[0].id, paused.interrupts[0].id);
+  assert.equal(pending[0].id, paused.approvals[0].id);
   const result = await resumeTurn(agent, { [pending[0].id]: true }, 'approve', opts());
   assert.equal(result.kind, 'done');
   assert.match(result.text, /executed test-1/);

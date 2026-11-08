@@ -5,7 +5,7 @@ import pg from 'pg';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { PostgresDelegationStore } from '../../src/core/delegation/postgres-store.ts';
 import { createDelegationRuntime } from '../../../../tests/fixtures/delegation-runtime.mjs';
-import { startTurn, runTurn } from '../../src/core/turn.ts';
+import { startTurn, runTurn, getPendingApprovals, resumeTurn } from '../../src/core/turn.ts';
 import { deleteThreadState } from '../../src/core/history.ts';
 
 const connectionString = process.env.TEST_POSTGRES_CONNECTION_STRING;
@@ -23,13 +23,13 @@ test('Postgres survives reconnection, atomically claims work, reuses results and
   });
   await admin.query(`CREATE SCHEMA "${schema}"`);
   const url = new URL(connectionString); url.searchParams.set('options', `-c search_path=${schema}`);
-  const open = async child => {
+  const open = async (child, args) => {
     const pool = new pg.Pool({ connectionString: url.toString() });
     const saver = new PostgresSaver(pool, undefined, { schema });
     await saver.setup();
     const store = new PostgresDelegationStore(url.toString());
     let closed = false;
-    const f = await createDelegationRuntime({ store, saver, ...(child ? { child } : {}) });
+    const f = await createDelegationRuntime({ store, saver, ...(child ? { child } : {}), ...(args ? { args } : {}) });
     const close = async () => {
       if (closed) return;
       closed = true;
@@ -42,7 +42,7 @@ test('Postgres survives reconnection, atomically claims work, reuses results and
   await startTurn(first.agent, 'delegate', 'durable-chat', { signal: AbortSignal.timeout(10000) });
   const [original] = await first.store.listConversation('durable-chat');
   assert.equal(original.status, 'completed');
-  assert.equal(original.usage[0].totalTokens, 7);
+  assert.equal(original.usage[0].usage.totalTokens, 7);
   await first.close();
 
   const second = await open(async () => { throw new Error('Completed child must not run again'); });
@@ -65,18 +65,68 @@ test('Postgres survives reconnection, atomically claims work, reuses results and
   await competitor.init();
   const request = original.request;
   const identity = { conversationId: 'atomic-chat', parentExecutionId: 'same-turn', parentToolCallId: 'same-call' };
-  const input = { ...identity, request, requestHash: createHash('sha256').update(JSON.stringify(request)).digest('hex') };
+  const input = { ...identity, parentAgentId: 'default', request, requestHash: createHash('sha256').update(JSON.stringify(request)).digest('hex') };
   const claims = await Promise.all([second.store.claim(input), competitor.claim(input)]);
   assert.equal(claims.filter(claim => claim.created).length, 1);
   assert.equal(claims[0].task.taskId, claims[1].task.taskId);
-  const blocked = await second.runtime.delegations.run('default', request, identity, { emit() {} });
-  assert.equal(blocked.status, 'running');
+  await second.store.update(claims[0].task.taskId, task => ({ ...task, attempt: 1, leaseExpiresAt: new Date(Date.now() + 30000).toISOString() }));
+  await assert.rejects(second.runtime.delegations.run('default', request, identity, { emit() {} }), /owned by another/);
   await assert.rejects(second.runtime.delegations.run('default', request, { ...identity, parentToolCallId: 'another-call' }, { emit() {} }), /Only one/);
   await assert.rejects(second.runtime.delegations.run('default', { ...request, context: 'changed' }, identity, { emit() {} }), /different task data/);
-  await assert.rejects(second.store.recordUsage(original.taskId, original.usage[0]), /budget exhausted/);
+  await assert.rejects(second.store.update(original.taskId, task => ({ ...task, status: 'running' })), /immutable/);
 
   await deleteThreadState(second.agent, 'durable-chat');
   assert.deepEqual(await second.store.listConversation('durable-chat'), []);
   assert.equal(await second.saver.getTuple({ configurable: { thread_id: original.checkpointThreadId } }), undefined);
   assert.equal((await competitor.listConversation('atomic-chat')).length, 1);
+
+  const { ToolMessage } = await import('@langchain/core/messages');
+  const worker = async messages => {
+    const result = messages.find(ToolMessage.isInstance);
+    return result ? result.text : [{ id: 'worker-uptime', name: 'exec_bash_command', args: { command: 'uptime' }, type: 'tool_call' }];
+  };
+  const args = { agentId: 'operator', objective: 'Check uptime', context: '' };
+  const pausedRuntime = await open(worker, args);
+  assert.equal((await startTurn(pausedRuntime.agent, 'delegate', 'paused-chat', { signal: AbortSignal.timeout(10000) })).kind, 'paused');
+  const approvals = await getPendingApprovals(pausedRuntime.agent, 'paused-chat');
+  const [paused] = await pausedRuntime.store.listConversation('paused-chat');
+  await pausedRuntime.close();
+  const resumedRuntime = await open(worker, args);
+  assert.deepEqual(await getPendingApprovals(resumedRuntime.agent, 'paused-chat'), approvals);
+  const result = await resumeTurn(resumedRuntime.agent, { [approvals[0].id]: true }, 'paused-chat', { signal: AbortSignal.timeout(10000) });
+  assert.equal(result.kind, 'done');
+  assert.match(result.text, /exit_code/);
+  const completed = await resumedRuntime.store.get(paused.taskId);
+  assert.equal(completed.status, 'completed');
+  assert.equal(completed.modelCalls, 2);
+  assert.equal(completed.tools[0].status, 'completed');
+  assert.ok(completed.tools[0].result);
+
+  // Row locking allows exactly one owner to transition an approval batch.
+  const contestInput = { ...input, conversationId: 'resume-race', parentExecutionId: 'resume-turn' };
+  const { task: contest } = await competitor.claim(contestInput);
+  const waiting = await competitor.update(contest.taskId, task => ({ ...task, status: 'waiting_approval', pendingApprovals: paused.pendingApprovals }));
+  const acquire = store => store.update(waiting.taskId, task => {
+    if (task.version !== waiting.version || task.status !== 'waiting_approval') throw new Error('Already claimed');
+    return { ...task, status: 'running', ownerToken: randomUUID() };
+  });
+  const owners = await Promise.allSettled([acquire(competitor), acquire(resumedRuntime.store)]);
+  assert.equal(owners.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(owners.filter(result => result.status === 'rejected').length, 1);
+
+  // Existing pre-release records gain ownership/budget fields; old running work
+  // is quarantined instead of being treated as a fresh task after migration.
+  const legacy = Object.fromEntries(['taskId', 'conversationId', 'parentExecutionId', 'parentToolCallId', 'checkpointThreadId', 'requestHash', 'request', 'status', 'output', 'truncated', 'error', 'startedAt', 'finishedAt'].map(key => [key, original[key]]));
+  Object.assign(legacy, { taskId: randomUUID(), conversationId: 'legacy-chat', status: 'running', usage: original.usage.map(entry => entry.usage) });
+  await admin.query(`INSERT INTO "${schema}".delegated_tasks (id,conversation_id,parent_execution_id,data) VALUES ($1,$2,$3,$4::jsonb)`, [legacy.taskId, legacy.conversationId, legacy.parentExecutionId, JSON.stringify(legacy)]);
+  await competitor.init();
+  const migrated = await competitor.get(legacy.taskId);
+  assert.equal(migrated.status, 'recovery_required');
+  assert.equal(migrated.parentAgentId, 'default');
+  assert.equal(migrated.modelCalls, 1);
+  assert.equal(migrated.usage[0].usage.totalTokens, 7);
+  await competitor.init();
+  assert.deepEqual(await competitor.get(legacy.taskId), migrated);
+
+
 });

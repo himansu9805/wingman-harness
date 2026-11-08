@@ -103,7 +103,8 @@ export class CoreRuntime {
       const targets = configuration.definitions.filter(target => definition.delegation.agents.includes(target.id));
       agentTools[definition.id] = [
         ...(agentTools[definition.id] ?? []),
-        createDelegationTool((request, identity, invocation) => this.delegations.run(definition.id, request, identity, invocation), targets),
+        createDelegationTool((request, identity, invocation) => this.delegations.run(definition.id, request, identity, invocation),
+          (taskId, answers, invocation) => this.delegations.resume(definition.id, taskId, answers, invocation), targets),
       ];
     }
     this.toolCatalogue = new AgentToolCatalogue(configuration.globalTools, agentTools);
@@ -121,9 +122,9 @@ export class CoreRuntime {
     // Every existing CLI/server entry point uses this agent unless given an ID.
     this.agents.get("default");
     this.delegations = new DelegationRunner(this.agents, delegationStore,
-      async id => {
+      async (id, middleware) => {
         const { Agent } = await import("./agent");
-        return Agent.create(this, id);
+        return Agent.create(this, id, [middleware]);
       },
       async id => {
         if (!checkpoints.saver.deleteThread) throw new Error("Checkpointer cannot delete delegated state");
