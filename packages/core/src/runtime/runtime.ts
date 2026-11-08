@@ -8,6 +8,7 @@ import { AgentRegistry } from "../agents/registry";
 import { DelegationRunner } from "../delegation/runner";
 import { createDelegationTool } from "../delegation/tool";
 import type { DelegationStore } from "../delegation/storage/store";
+import type { ExecutionResources } from "../agents/module";
 
 import { defaultDependencies, type RuntimeDependencies } from "./dependencies";
 
@@ -24,6 +25,8 @@ export class CoreRuntime {
   readonly models: AgentModels;
   readonly delegations: DelegationRunner;
   readonly plans: DelegationCoordinator;
+  private readonly executionResources: readonly ExecutionResources[];
+  private readonly prepareModule?: (id: string) => Promise<void>;
 
   private constructor(
     private readonly dependencies: RuntimeDependencies,
@@ -33,6 +36,8 @@ export class CoreRuntime {
     configuration: AgentConfiguration,
     private readonly delegationStore: DelegationStore,
   ) {
+    this.executionResources = configuration.executionResources ?? [];
+    this.prepareModule = configuration.prepareAgent;
     const ids = new Set<string>();
     for (const definition of configuration.definitions) {
       if (ids.has(definition.id)) throw new Error(`Agent "${definition.id}" is already registered`);
@@ -86,6 +91,7 @@ export class CoreRuntime {
           throw new Error("Checkpointer cannot delete delegated state");
         await checkpoints.saver.deleteThread(id);
       },
+      (id) => this.releaseExecution(id),
     );
     this.delegations.validateTargets();
     this.plans = new DelegationCoordinator(
@@ -110,6 +116,7 @@ export class CoreRuntime {
     let checkpoints: CheckpointStore | undefined;
     let mcp: McpConnections | undefined;
     let delegations: DelegationStore | undefined;
+    let executionResources: readonly ExecutionResources[] = [];
 
     try {
       // Acquire sequentially so cleanup cannot race pending initialization.
@@ -117,7 +124,8 @@ export class CoreRuntime {
       const skills = Object.freeze(
         (await dependencies.loadSkills()).map((skill) => Object.freeze({ ...skill })),
       );
-      const configuration = await dependencies.loadConfiguration(skills);
+      const configuration = await dependencies.loadConfiguration(skills, mcp);
+      executionResources = configuration.executionResources ?? [];
       checkpoints = await dependencies.openCheckpointer();
       delegations = await dependencies.openDelegations();
       await delegations.init();
@@ -125,7 +133,15 @@ export class CoreRuntime {
       return new CoreRuntime(dependencies, mcp, skills, checkpoints, configuration, delegations);
     } catch (error) {
       try {
-        await releaseResources(dependencies, checkpoints, mcp, delegations);
+        await releaseResources(
+          dependencies,
+          checkpoints,
+          mcp,
+          delegations,
+          undefined,
+          undefined,
+          executionResources,
+        );
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
@@ -144,10 +160,28 @@ export class CoreRuntime {
     }
   }
 
+  /** Prepare only the requested role's external capabilities before graph execution. */
+  async prepareAgent(id: string): Promise<void> {
+    this.assertOpen();
+    await this.prepareModule?.(id);
+    this.assertOpen();
+  }
+
   /** Shared conversation saver; callers must use distinct IDs for isolation. */
   get checkpointer() {
     this.assertOpen();
     return this.checkpoints.saver;
+  }
+
+  /** Release only capabilities belonging to this checkpoint execution. */
+  async releaseExecution(threadId: string): Promise<void> {
+    const outcomes = await Promise.allSettled(
+      this.executionResources.map((resource) => resource.release(threadId)),
+    );
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : [],
+    );
+    if (failures.length) throw new AggregateError(failures, "Execution resource cleanup failed");
   }
 
   /**
@@ -188,6 +222,7 @@ export class CoreRuntime {
       this.delegationStore,
       this.delegations,
       this.plans,
+      this.executionResources,
     ).finally(() => {
       this.closed = true;
     }));
@@ -202,6 +237,7 @@ async function releaseResources(
   delegations?: DelegationStore,
   runner?: DelegationRunner,
   plans?: DelegationCoordinator,
+  executionResources: readonly ExecutionResources[] = [],
 ): Promise<void> {
   const errors: unknown[] = [];
 
@@ -210,6 +246,7 @@ async function releaseResources(
     () => dependencies.stopScheduler(),
     () => plans?.close(),
     () => runner?.close(),
+    ...executionResources.map((resource) => () => resource.close()),
     () => dependencies.closeResults(),
     () => delegations?.close(),
     () => mcp?.close(),

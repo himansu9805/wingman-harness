@@ -69,7 +69,11 @@ test("agent grants connect only selected profiles and expose only selected tools
       tools.map((tool) => tool.name),
       ["mcp__global__docs__search"],
     );
-    assert.equal(await tools[0].invoke({}), "docs");
+    assert.equal(
+      (await tools[0].invoke({ type: "tool_call", id: "docs-call", name: tools[0].name, args: {} }))
+        .text,
+      "docs",
+    );
     assert.deepEqual(invoked, [{ serverId: "docs", name: "search" }]);
   } finally {
     await manager.close();
@@ -262,10 +266,11 @@ test("installed adapter namespaces real stdio tools and routes calls to their ow
         capabilities: { tools: {} }, serverInfo: { name: 'test', version: '1.0' },
       };
       else if (request.method === 'tools/list') result = { tools: [{
-        name: 'search', description: 'Test search', inputSchema: { type: 'object', properties: {} },
+        name: 'search', description: 'Test search', inputSchema: { type: 'object', properties: { fail: { type: 'boolean' } } },
       }] };
       else if (request.method === 'tools/call') result = {
-        content: [{ type: 'text', text: 'called ' + process.argv[1] }],
+        isError: request.params.arguments.fail === true,
+        content: [{ type: 'text', text: request.params.arguments.fail ? 'Domain rejected' : 'called ' + process.argv[1] }],
       };
       else result = {};
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
@@ -288,8 +293,66 @@ test("installed adapter namespaces real stdio tools and routes calls to their ow
       tools.map((tool) => tool.name),
       ["mcp__global__docs__search", "mcp__global__github-read__search"],
     );
-    assert.match(JSON.stringify(await tools[0].invoke({})), /called docs/);
-    assert.match(JSON.stringify(await tools[1].invoke({})), /called github-read/);
+    assert.match(
+      JSON.stringify(
+        await tools[0].invoke({
+          type: "tool_call",
+          id: "docs-call",
+          name: tools[0].name,
+          args: {},
+        }),
+      ),
+      /called docs/,
+    );
+    assert.match(
+      JSON.stringify(
+        await tools[1].invoke({
+          type: "tool_call",
+          id: "github-call",
+          name: tools[1].name,
+          args: {},
+        }),
+      ),
+      /called github-read/,
+    );
+    const error = await tools[0].invoke({
+      type: "tool_call",
+      id: "rejected",
+      name: tools[0].name,
+      args: { fail: true },
+    });
+    assert.equal(error.status, "error");
+    assert.equal(error.tool_call_id, "rejected");
+    assert.match(error.text, /Domain rejected/);
+  } finally {
+    await manager.close();
+  }
+});
+
+test("stdio working directories resolve beside their configuration", async () => {
+  const configs = [];
+  const manager = new McpConnectionManager(
+    {
+      mcpServers: {
+        default: { command: "node" },
+        nested: { command: "node", cwd: "scripts" },
+      },
+    },
+    (_id, configuration) => {
+      configs.push(configuration);
+      return { getTools: async () => [], close: async () => {} };
+    },
+    "/tmp/wingman-config",
+  );
+  try {
+    await getGlobalTools(manager, [
+      { serverId: "default", tools: "all" },
+      { serverId: "nested", tools: "all" },
+    ]);
+    assert.deepEqual(
+      configs.map((config) => config.cwd),
+      ["/tmp/wingman-config", "/tmp/wingman-config/scripts"],
+    );
   } finally {
     await manager.close();
   }

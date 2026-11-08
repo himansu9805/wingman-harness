@@ -30,6 +30,14 @@ export const AgentDefinitionSchema = z
     instructions: z.string().trim().min(1),
 
     model: z.enum(["routed", "fast", "powerful"]),
+    /** Role-specific worker budget, bounded by its coordinator's delegation ceiling. */
+    execution: z
+      .object({
+        timeoutMs: z.number().int().min(1).max(120000),
+        maxModelCalls: z.number().int().min(1).max(100),
+      })
+      .strict()
+      .optional(),
     delegation: z
       .object({
         agents: toolSelection.default([]),

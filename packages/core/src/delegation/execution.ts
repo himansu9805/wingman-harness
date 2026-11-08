@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { createMiddleware } from "langchain";
+import { createMiddleware, ToolInvocationError } from "langchain";
 import { ToolMessage, mapStoredMessageToChatMessage } from "@langchain/core/messages";
+import { ToolInputParsingException } from "@langchain/core/tools";
 import { isGraphInterrupt } from "@langchain/langgraph";
 import type { DelegationStore } from "./storage/store";
 import { DelegationRejected, RecoveryRequired, type DelegatedTask } from "./contracts";
@@ -72,6 +73,12 @@ export function executionMiddleware(
             toolCallId: id,
             name,
             hash,
+            requestedUrl:
+              typeof args.url === "string" &&
+              args.url.length <= 2000 &&
+              /^https?:\/\//.test(args.url)
+                ? args.url
+                : null,
             status: "running",
             ownerToken: owner,
             result: null,
@@ -80,13 +87,27 @@ export function executionMiddleware(
         return task;
       });
       try {
-        let result = await handler(request);
+        let result;
+        try {
+          result = await handler(request);
+        } catch (error) {
+          const validationError = error instanceof ToolInvocationError ? error.toolError : error;
+          if (!(validationError instanceof ToolInputParsingException)) throw error;
+          // Framework validation failed before the tool function was dispatched.
+          result = new ToolMessage({
+            name,
+            tool_call_id: id,
+            status: "error",
+            content: `Invalid tool arguments. Follow the tool's declared schema. ${validationError.message.slice(0, 1000)}`,
+          });
+        }
         if (!ToolMessage.isInstance(result))
           throw new RecoveryRequired("Worker tool returned an unsupported state mutation");
         if (JSON.stringify(result.toDict()).length > 64000) {
           result = new ToolMessage({
             name,
             tool_call_id: id,
+            status: result.status,
             content: JSON.stringify(result.content).slice(0, 16000) + "\n[Tool result truncated]",
           });
         }

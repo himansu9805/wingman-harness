@@ -1,8 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { MultiServerMCPClient, type Connection } from "@langchain/mcp-adapters";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
 import { McpGrantsSchema, McpServerIdSchema, type RegisteredMcpGrant } from "./grants";
+import { responseTool } from "./tool";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 /** The subset of the adapter used by connection ownership and discovery. */
 export interface McpClient {
@@ -44,13 +47,30 @@ const configSchema = z
 
 function createClient(serverId: string, configuration: unknown): McpClient {
   // The adapter constructor validates the transport configuration at this boundary.
-  return new MultiServerMCPClient({
+  const manager = new MultiServerMCPClient({
     mcpServers: { [serverId]: configuration as Connection },
     prefixToolNameWithServerName: true,
     additionalToolNamePrefix: "mcp",
     throwOnLoadError: true,
     onConnectionError: "throw",
   });
+  return {
+    async getTools() {
+      const definitions = await manager.getTools();
+      const client = await manager.getClient(serverId);
+      if (!client) throw new Error("MCP connection unavailable");
+      const prefix = `mcp__${serverId}__`;
+      return definitions.map((definition) => {
+        if (!definition.name.startsWith(prefix)) throw new Error("Invalid MCP tool namespace");
+        const name = definition.name.slice(prefix.length);
+        return responseTool(definition, async (args, signal) => {
+          const result = await client.callTool({ name, arguments: args }, undefined, { signal });
+          return CallToolResultSchema.parse(result);
+        });
+      });
+    },
+    close: () => manager.close(),
+  };
 }
 
 interface LoadedProfile {
@@ -73,19 +93,20 @@ export class McpConnectionManager implements McpConnections {
   constructor(
     configuration: unknown,
     private readonly clientFactory: McpClientFactory = createClient,
+    directory?: string,
   ) {
     const parsed = configSchema.safeParse(configuration);
     if (!parsed.success)
       throw new Error("Invalid MCP configuration; check server profiles and IDs");
     const profiles = new Map<string, unknown>();
     for (const [id, configuration] of Object.entries(parsed.data.mcpServers)) {
-      profiles.set(`global__${id}`, configuration);
+      profiles.set(`global__${id}`, workingDirectory(configuration, directory));
     }
     this.serverIds = Object.freeze(Object.keys(parsed.data.mcpServers));
     for (const [agentId, own] of Object.entries(parsed.data.agents)) {
       this.privateProfiles.set(agentId, Object.freeze(Object.keys(own.mcpServers)));
       for (const [id, configuration] of Object.entries(own.mcpServers)) {
-        profiles.set(`agent__${agentId}__${id}`, configuration);
+        profiles.set(`agent__${agentId}__${id}`, workingDirectory(configuration, directory));
       }
     }
     this.profiles = profiles;
@@ -208,5 +229,20 @@ export async function openMcpConnections(path: string): Promise<McpConnections> 
   } catch {
     throw new Error("MCP configuration file contains invalid JSON");
   }
-  return new McpConnectionManager(configuration);
+  return new McpConnectionManager(configuration, createClient, dirname(resolve(path)));
+}
+
+/** Resolve stdio paths beside the configuration, independently of the client's cwd. */
+function workingDirectory(configuration: unknown, directory?: string): unknown {
+  if (
+    !directory ||
+    !configuration ||
+    typeof configuration !== "object" ||
+    !("command" in configuration)
+  )
+    return configuration;
+  const cwd = "cwd" in configuration ? configuration.cwd : undefined;
+  if (cwd !== undefined && typeof cwd !== "string")
+    throw new Error("Invalid MCP working directory");
+  return { ...configuration, cwd: resolve(directory, cwd ?? ".") };
 }

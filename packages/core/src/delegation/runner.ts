@@ -9,6 +9,7 @@ import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 import { pendingApprovals, type NativeApproval } from "../conversations/approvals";
 import { terminal, type DelegationStore } from "./storage/store";
 import { executionMiddleware, owned } from "./execution";
+import { workerBudget } from "./budgets";
 import {
   DelegationRejected,
   DelegationBusyError,
@@ -41,6 +42,7 @@ export class DelegationRunner {
     private readonly store: DelegationStore,
     private readonly createAgent: (id: string, middleware: AnyAgentMiddleware) => Promise<Agent>,
     private readonly deleteCheckpoint: (id: string) => Promise<void>,
+    private readonly releaseExecution: (id: string) => Promise<void> = async () => {},
   ) {}
 
   validateTargets(): void {
@@ -154,9 +156,25 @@ export class DelegationRunner {
     if (this.active.has(snapshot.taskId))
       throw new DelegationBusyError("Specialist execution already claimed");
     const controller = new AbortController();
-    const promise = this.execute(parent, snapshot, invocation, controller.signal, answers).finally(
-      () => this.active.delete(snapshot.taskId),
-    );
+    const promise = this.execute(parent, snapshot, invocation, controller.signal, answers)
+      .then(
+        async (result) => {
+          if (terminal(result)) await this.releaseExecution(snapshot.checkpointThreadId);
+          return result;
+        },
+        async (error) => {
+          try {
+            await this.releaseExecution(snapshot.checkpointThreadId);
+          } catch (cleanupError) {
+            throw new AggregateError(
+              [error, cleanupError],
+              "Worker execution and resource cleanup failed",
+            );
+          }
+          throw error;
+        },
+      )
+      .finally(() => this.active.delete(snapshot.taskId));
     this.active.set(snapshot.taskId, {
       conversationId: snapshot.conversationId,
       controller,
@@ -174,7 +192,8 @@ export class DelegationRunner {
   ) {
     const owner = randomUUID();
     const now = Date.now();
-    const remaining = parent.delegation.timeoutMs - snapshot.processingMs;
+    const budget = workerBudget(parent, this.registry.get(snapshot.request.agentId));
+    const remaining = budget.timeoutMs - snapshot.processingMs;
     const task = await this.store.update(snapshot.taskId, (current) => {
       if (
         current.version !== snapshot.version ||
@@ -227,7 +246,7 @@ export class DelegationRunner {
         throw new DelegationRejected("Specialist processing-time budget exhausted");
       const child = await this.createAgent(
         task.request.agentId,
-        executionMiddleware(this.store, task.taskId, owner, parent.delegation.maxModelCalls),
+        executionMiddleware(this.store, task.taskId, owner, budget.maxModelCalls),
       );
       const options = {
         signal,
@@ -353,18 +372,14 @@ export class DelegationRunner {
     snapshot: DelegatedTask,
     invocation: Invocation,
   ): Promise<DelegatedTask> {
+    const budget = workerBudget(parent, this.registry.get(snapshot.request.agentId));
     if (snapshot.leaseExpiresAt && Date.parse(snapshot.leaseExpiresAt) > Date.now()) {
       this.emit(snapshot, "blocked", invocation);
       throw new DelegationBusyError("Specialist is owned by another execution");
     }
     const child = await this.createAgent(
       snapshot.request.agentId,
-      executionMiddleware(
-        this.store,
-        snapshot.taskId,
-        randomUUID(),
-        parent.delegation.maxModelCalls,
-      ),
+      executionMiddleware(this.store, snapshot.taskId, randomUUID(), budget.maxModelCalls),
     );
     const state = await child.app.graph.getState({
       configurable: { thread_id: snapshot.checkpointThreadId },
@@ -389,7 +404,7 @@ export class DelegationRunner {
           current.processingMs +
           (current.attemptStartedAt
             ? Math.min(
-                parent.delegation.timeoutMs,
+                budget.timeoutMs,
                 Math.max(0, Date.now() - Date.parse(current.attemptStartedAt)),
               )
             : 0),
@@ -419,6 +434,7 @@ export class DelegationRunner {
         finishedAt: new Date().toISOString(),
       };
     });
+    if (terminal(recovered)) await this.releaseExecution(snapshot.checkpointThreadId);
     this.emit(recovered, recovered.status as DelegationEvent["phase"], invocation);
     await invocation.onTaskUpdate?.();
     return recovered;
@@ -453,6 +469,7 @@ export class DelegationRunner {
             error: "Parent turn abandoned",
           };
         });
+        await this.releaseExecution(task.checkpointThreadId);
       }
     }
   }
@@ -464,6 +481,7 @@ export class DelegationRunner {
       if (!tasks.length) return;
       for (const task of tasks) {
         await this.deleteCheckpoint(task.checkpointThreadId);
+        await this.releaseExecution(task.checkpointThreadId);
         await this.store.delete(task.taskId);
       }
     }

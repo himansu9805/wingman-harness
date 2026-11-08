@@ -8,7 +8,7 @@ import type { DelegationStore } from "../delegation/storage/store";
 export interface RuntimeDependencies {
   openMcp(): Promise<McpConnections>;
   loadSkills(): Promise<readonly SkillMeta[]>;
-  loadConfiguration(skills: readonly SkillMeta[]): Promise<AgentConfiguration>;
+  loadConfiguration(skills: readonly SkillMeta[], mcp: McpConnections): Promise<AgentConfiguration>;
   readSkill(skill: SkillMeta): Promise<string>;
   openCheckpointer(): Promise<CheckpointStore>;
   openDelegations(): Promise<DelegationStore>;
@@ -28,9 +28,9 @@ export const defaultDependencies: RuntimeDependencies = {
     const { listSkills } = await import("../skills/catalogue");
     return listSkills();
   },
-  async loadConfiguration(skills) {
+  async loadConfiguration(skills, mcp) {
     const { loadAgentConfiguration } = await import("./configuration");
-    return loadAgentConfiguration(skills);
+    return loadAgentConfiguration(skills, mcp);
   },
   async readSkill(skill) {
     const { loadSkillContent } = await import("../skills/catalogue");

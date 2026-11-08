@@ -9,8 +9,8 @@ export function createDefaultAgentDefinition(schedulerEnabled = false): AgentDef
     model: "routed",
     delegation: {
       agents: ["analyst", "operator"],
-      timeoutMs: 30000,
-      maxModelCalls: 8,
+      timeoutMs: 120000,
+      maxModelCalls: 12,
       maxTasks: 8,
       maxConcurrency: 2,
     },

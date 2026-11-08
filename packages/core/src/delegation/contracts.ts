@@ -36,6 +36,7 @@ export const ToolLedgerSchema = z.object({
   toolCallId: z.string().min(1),
   name: z.string(),
   hash: z.string(),
+  requestedUrl: z.string().max(2000).nullable().default(null),
   status: z.enum(["running", "waiting_approval", "completed", "uncertain"]),
   ownerToken: z.string().uuid(),
   result: StoredToolSchema.nullable(),
@@ -163,6 +164,16 @@ export const PlanTaskStatusSchema = z.union([
   z.literal("pending"),
   z.literal("blocked"),
 ]);
+/** Observed tool responses are evidence, independent of a specialist's final answer. */
+export const TaskObservationSchema = z.object({
+  toolCallId: z.string().min(1),
+  tool: z.string().min(1),
+  status: z.enum(["success", "error"]),
+  requestedUrl: z.string().max(500).nullable(),
+  content: z.string().max(500),
+  truncated: z.boolean(),
+});
+export type TaskObservation = z.infer<typeof TaskObservationSchema>;
 export const DelegationTaskSnapshotSchema = z.object({
   key: z.string(),
   agentId: z.string(),
@@ -173,6 +184,7 @@ export const DelegationTaskSnapshotSchema = z.object({
   output: z.string().max(4000).nullable(),
   truncated: z.boolean(),
   error: z.string().nullable(),
+  observations: z.array(TaskObservationSchema).max(4).default([]),
   toolCount: z.number().int().nonnegative(),
   decisions: z.array(z.object({ toolCallId: z.string(), approved: z.boolean() })).max(32),
   startedAt: z.string().nullable(),

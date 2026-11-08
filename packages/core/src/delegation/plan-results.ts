@@ -1,5 +1,6 @@
 import type { DelegatedTask, DelegationRequest } from "./contracts";
 import type { PlannedTask, DelegationPlan, PlanRecord } from "./plan";
+import { taskObservations } from "./evidence";
 
 /** Dependants receive bounded, explicitly labelled data from successful prerequisites only. */
 export function requestFor(task: PlannedTask, completed: DelegatedTask[]): DelegationRequest {
@@ -35,6 +36,7 @@ export function resultsFor(plan: DelegationPlan, tasks: DelegatedTask[]): PlanRe
       output: task?.output?.slice(0, 4000) ?? null,
       truncated: !!task && (task.truncated || (task.output?.length ?? 0) > 4000),
       error: task?.error ?? null,
+      observations: task ? taskObservations(task) : [],
     };
   });
   // A fixed-point walk also marks transitive dependants of failed prerequisites.

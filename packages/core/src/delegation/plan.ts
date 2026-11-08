@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PendingApprovalSchema } from "../conversations/approvals";
 import { PlanStatusSchema, PlanTaskStatusSchema, DelegationRejected } from "./contracts";
+import { TaskObservationSchema } from "./contracts";
 import type { RegisteredAgentDefinition, AgentRegistry } from "../agents/registry";
 
 const TaskKey = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
@@ -28,6 +29,7 @@ const PlanResultSchema = z.object({
   output: z.string().max(4000).nullable(),
   truncated: z.boolean(),
   error: z.string().nullable(),
+  observations: z.array(TaskObservationSchema).max(4).default([]),
 });
 export const PlanRecordSchema = z.object({
   planId: z.string().uuid(),

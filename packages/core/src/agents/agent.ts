@@ -14,6 +14,7 @@ async function buildAgentGraph(
   execution: readonly AnyAgentMiddleware[] = [],
 ) {
   runtime.assertOpen();
+  await runtime.prepareAgent(definition.id);
   const capabilities = definition.capabilities;
   const selection = capabilities.skills;
   const skills =

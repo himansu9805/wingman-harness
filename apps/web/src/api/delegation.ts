@@ -1,5 +1,14 @@
 import type { TokenUsage } from "./run-metadata";
 
+export interface TaskObservation {
+  toolCallId: string;
+  tool: string;
+  status: "success" | "error";
+  requestedUrl: string | null;
+  content: string;
+  truncated: boolean;
+}
+
 export interface DelegationTask {
   key: string;
   agentId: string;
@@ -19,6 +28,7 @@ export interface DelegationTask {
   output: string | null;
   truncated: boolean;
   error: string | null;
+  observations: TaskObservation[];
   toolCount: number;
   decisions: { toolCallId: string; approved: boolean }[];
   startedAt: string | null;

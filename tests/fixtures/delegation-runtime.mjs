@@ -77,6 +77,7 @@ export async function createDelegationRuntime({
   maxConcurrency = 2,
   maxTasks = 8,
   operatorTools = [],
+  executionResources = [],
   summarize,
   child = async () => "Specialist analysis",
   timeoutMs = 30000,
@@ -119,6 +120,7 @@ export async function createDelegationRuntime({
     async loadConfiguration() {
       return {
         delegationConcurrency,
+        executionResources,
         definitions: [
           definition,
           analystAgentDefinition,
