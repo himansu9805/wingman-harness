@@ -1,6 +1,6 @@
 import type { RegisteredAgentDefinition } from "../agents/registry";
 
-/** Specialists choose a processing budget; coordinators impose the upper bound. */
+/** Specialists choose a processing budget; orchestrators impose the upper bound. */
 export function workerBudget(parent: RegisteredAgentDefinition, child: RegisteredAgentDefinition) {
   return {
     timeoutMs: Math.min(

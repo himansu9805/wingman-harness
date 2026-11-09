@@ -74,7 +74,7 @@ export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } 
   model.usage = usage;
   return {
     agent: {
-      id: "default",
+      id: "orchestrator",
       async cancelDelegations() {},
       async deleteDelegatedState() {},
       app: createAgent({ model, tools: [action], checkpointer }),

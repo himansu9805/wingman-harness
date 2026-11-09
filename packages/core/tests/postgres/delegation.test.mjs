@@ -109,7 +109,7 @@ test(
     };
     const input = {
       ...identity,
-      parentAgentId: "default",
+      parentAgentId: "orchestrator",
       request,
       requestHash: createHash("sha256").update(JSON.stringify(request)).digest("hex"),
     };
@@ -122,12 +122,12 @@ test(
       leaseExpiresAt: new Date(Date.now() + 30000).toISOString(),
     }));
     await assert.rejects(
-      second.runtime.delegations.run("default", request, identity, { emit() {} }),
+      second.runtime.delegations.run("orchestrator", request, identity, { emit() {} }),
       /owned by another/,
     );
     await assert.rejects(
       second.runtime.delegations.run(
-        "default",
+        "orchestrator",
         request,
         { ...identity, parentToolCallId: "another-call" },
         { emit() {} },
@@ -135,7 +135,7 @@ test(
       /Only one/,
     );
     await assert.rejects(
-      second.runtime.delegations.run("default", { ...request, context: "changed" }, identity, {
+      second.runtime.delegations.run("orchestrator", { ...request, context: "changed" }, identity, {
         emit() {},
       }),
       /different task data/,
@@ -251,6 +251,7 @@ test(
     await competitor.init();
     const migrated = await competitor.get(legacy.taskId);
     assert.equal(migrated.status, "recovery_required");
+    // Historical records retain the original role identity after the rename.
     assert.equal(migrated.parentAgentId, "default");
     assert.equal(migrated.modelCalls, 1);
     assert.equal(migrated.usage[0].usage.totalTokens, 7);
@@ -357,7 +358,7 @@ test(
       /immutable/,
     );
     const planInput = {
-      parentAgentId: "default",
+      parentAgentId: "orchestrator",
       conversationId: "plan-claim",
       parentExecutionId: "plan-user",
       parentToolCallId: "plan-call",

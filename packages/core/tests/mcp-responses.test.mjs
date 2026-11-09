@@ -264,3 +264,38 @@ test("lost transport preserves earlier evidence without replaying the uncertain 
     await f.runtime.close();
   }
 });
+
+test("oversized protocol artifacts preserve readable text within the durable result bound", async () => {
+  const source = 'Reported result: "1–0".\n'.repeat(400);
+  const selected = tool(
+    async () =>
+      new ToolMessage({
+        name: "read_source",
+        tool_call_id: "large-source",
+        content: source,
+        artifact: { binary: "x".repeat(100000) },
+      }),
+    { name: "read_source", description: "Read fixture source", schema: z.object({}) },
+  );
+  const f = await createDelegationRuntime({
+    args: { agentId: "operator", objective: "Read source", context: "" },
+    operatorTools: [selected],
+    child: async (messages) =>
+      messages.some(ToolMessage.isInstance)
+        ? "Read source"
+        : [{ type: "tool_call", id: "large-source", name: "read_source", args: {} }],
+  });
+  try {
+    await startTurn(f.agent, "read", "large-protocol-result", {
+      signal: AbortSignal.timeout(10000),
+    });
+    const [task] = await f.store.listConversation("large-protocol-result");
+    assert.equal(task.status, "completed");
+    const stored = task.tools[0].result;
+    assert.equal(stored.data.content, source);
+    assert.deepEqual(stored.data.artifact, { omitted: true });
+    assert(JSON.stringify(stored).length <= 64000);
+  } finally {
+    await f.runtime.close();
+  }
+});

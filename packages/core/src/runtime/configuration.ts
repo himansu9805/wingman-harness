@@ -4,7 +4,6 @@ import type { modelRouter } from "../integrations/models/router";
 import type { AgentDefinition } from "../agents/definition";
 import type { SkillMeta } from "../skills/catalogue";
 import type { ExecutionResources } from "../agents/module";
-import type { McpConnections } from "../integrations/mcp/client";
 
 /** Shared models and routing policy; fixed-model agents omit the router. */
 export interface AgentModels {
@@ -33,7 +32,6 @@ export interface AgentConfiguration {
  */
 export async function loadAgentConfiguration(
   skills: readonly SkillMeta[],
-  mcp: McpConnections,
 ): Promise<AgentConfiguration> {
   const { createLocalTools } = await import("../capabilities/catalogue");
   const { fastModel, strongModel, modelRouter } = await import("../integrations/models/router");
@@ -41,7 +39,7 @@ export async function loadAgentConfiguration(
   const { assembleAgentModules } = await import("../agents/module");
   const { settings } = await import("../settings");
   return {
-    ...assembleAgentModules(builtinAgentModules(settings.SCHEDULER_ENABLED, mcp)),
+    ...assembleAgentModules(builtinAgentModules(settings.SCHEDULER_ENABLED)),
     globalTools: createLocalTools(skills),
     models: {
       fast: fastModel,

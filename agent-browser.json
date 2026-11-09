@@ -1,6 +1,0 @@
-{
-  "headed": false,
-  "json": true,
-  "maxOutput": 12000,
-  "idleTimeout": "10m"
-}

@@ -30,11 +30,13 @@ export const AgentDefinitionSchema = z
     instructions: z.string().trim().min(1),
 
     model: z.enum(["routed", "fast", "powerful"]),
-    /** Role-specific worker budget, bounded by its coordinator's delegation ceiling. */
+    /** Role-specific worker budget, bounded by its orchestrator's delegation ceiling. */
     execution: z
       .object({
         timeoutMs: z.number().int().min(1).max(120000),
         maxModelCalls: z.number().int().min(1).max(100),
+        /** Attempt limits keyed by the exact exposed tool name; persisted across resumes. */
+        toolCallLimits: z.record(z.string().min(1), z.number().int().min(1).max(32)).optional(),
       })
       .strict()
       .optional(),

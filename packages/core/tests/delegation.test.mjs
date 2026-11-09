@@ -26,7 +26,7 @@ test("coordinator delegates one scoped task, persists result and replies in orig
       onModelUsage: async (counts) => usage.push(counts),
     });
     assert.equal(result.kind, "done");
-    assert.match(result.text, /Coordinator:.*Specialist analysis/);
+    assert.match(result.text, /Orchestrator:.*Specialist analysis/);
     const tasks = await f.store.listConversation("conversation");
     assert.equal(tasks.length, 1);
     assert.equal(tasks[0].status, "completed");
@@ -170,7 +170,7 @@ test("persisted uncertain work is not restarted by another runner", async () => 
     const hash = createHash("sha256").update(JSON.stringify(request)).digest("hex");
     const { task } = await f.store.claim({
       ...identity,
-      parentAgentId: "default",
+      parentAgentId: "orchestrator",
       request,
       requestHash: hash,
     });
@@ -190,7 +190,7 @@ test("persisted uncertain work is not restarted by another runner", async () => 
       async () => {},
     );
     await assert.rejects(
-      replacement.run("default", request, identity, { emit: (frame) => frames.push(frame) }),
+      replacement.run("orchestrator", request, identity, { emit: (frame) => frames.push(frame) }),
       /owned by another/,
     );
     assert.equal(frames[0].phase, "blocked");
@@ -271,11 +271,11 @@ test("concurrent duplicate invocations coalesce; a different call in the turn is
     },
   });
   try {
-    const first = f.runtime.delegations.run("default", request, identity, { emit() {} });
-    const duplicate = f.runtime.delegations.run("default", request, identity, { emit() {} });
+    const first = f.runtime.delegations.run("orchestrator", request, identity, { emit() {} });
+    const duplicate = f.runtime.delegations.run("orchestrator", request, identity, { emit() {} });
     await assert.rejects(
       f.runtime.delegations.run(
-        "default",
+        "orchestrator",
         request,
         { ...identity, parentToolCallId: "other-call" },
         { emit() {} },
@@ -283,7 +283,7 @@ test("concurrent duplicate invocations coalesce; a different call in the turn is
       /Only one/,
     );
     await assert.rejects(
-      f.runtime.delegations.run("default", { ...request, context: "different" }, identity, {
+      f.runtime.delegations.run("orchestrator", { ...request, context: "different" }, identity, {
         emit() {},
       }),
       /different task data/,
@@ -352,9 +352,14 @@ test("oversized context is rejected before claiming or executing a task", async 
   const f = await createDelegationRuntime();
   try {
     await assert.rejects(
-      f.runtime.delegations.run("default", { ...request, context: "x".repeat(20001) }, identity, {
-        emit() {},
-      }),
+      f.runtime.delegations.run(
+        "orchestrator",
+        { ...request, context: "x".repeat(20001) },
+        identity,
+        {
+          emit() {},
+        },
+      ),
     );
     assert.deepEqual(await f.store.listConversation(identity.conversationId), []);
     assert.equal(f.trace.calls.length, 0);

@@ -39,7 +39,7 @@ test("CLI progress identifies task owners, deduplicates replay and treats child 
   const count = lines.length;
   reporter.update(snapshot);
   assert.equal(lines.length, count);
-  assert.equal(reporter.owner("worker-id", "default"), "research [analyst]");
+  assert.equal(reporter.owner("worker-id", "orchestrator"), "research [analyst]");
   const done = {
     ...snapshot,
     status: "completed",

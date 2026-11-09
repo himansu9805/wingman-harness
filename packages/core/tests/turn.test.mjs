@@ -16,14 +16,14 @@ const approval = (id) => ({
   value: {
     kind: "bash_approval",
     command: id,
-    execution: { agentId: "default", taskId: null, toolCallId: id },
+    execution: { agentId: "orchestrator", taskId: null, toolCallId: id },
   },
 });
 function streamed(...batches) {
   const inputs = [];
   let pending = [];
   return {
-    id: "default",
+    id: "orchestrator",
     inputs,
     async cancelDelegations() {},
     app: {
@@ -161,7 +161,7 @@ test("pending approvals are flattened across tasks", async () => {
     ["a", "b"].map((id) => ({
       id,
       command: id,
-      execution: { agentId: "default", taskId: null, toolCallId: id },
+      execution: { agentId: "orchestrator", taskId: null, toolCallId: id },
     })),
   );
 });
