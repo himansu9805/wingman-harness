@@ -8,6 +8,8 @@ import appModule from "../dist/app.module.js";
 const { AppModule } = appModule;
 import AgentServiceModule from "../dist/agent/agent.service.js";
 const { AgentService } = AgentServiceModule;
+import titlesModule from "../dist/threads/thread-titles.service.js";
+import titleGeneratorModule from "../dist/threads/title-generator.js";
 import AGENT_RUNTIMEModule from "../dist/agent/agent.runtime.js";
 const { AGENT_RUNTIME } = AGENT_RUNTIMEModule;
 import ThreadsControllerModule from "../dist/threads/threads.controller.js";
@@ -92,6 +94,12 @@ async function server(t, agent, options = {}) {
     controllers: [ThreadsController],
     providers: [
       AgentService,
+      titlesModule.ThreadTitles,
+      {
+        provide: titleGeneratorModule.TITLE_GENERATOR,
+        useValue: options.titleGenerator ?? { generate: async () => "" },
+      },
+      { provide: titlesModule.TITLE_TIMEOUT_MS, useValue: options.titleTimeoutMs ?? 10000 },
       TurnRunner,
       { provide: THREAD_EVENTS, useValue: journal },
       { provide: THREAD_REPOSITORY, useValue: store },
@@ -1567,5 +1575,46 @@ test(
       "completed",
     );
     assert.deepEqual(await api.json("fresh/pending"), []);
+  },
+);
+
+test(
+  "a slow title does not delay acceptance or the final reply and publishes once afterward",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const title = deferred();
+    let generated = 0;
+    const fixture = await createApprovalAgent();
+    const api = await server(t, fixture.agent, {
+      titleGenerator: {
+        generate: async (query) => {
+          generated++;
+          assert.equal(query, "Inspect my Docker containers");
+          return title.promise;
+        },
+      },
+    });
+    const frames = await api.stream("fresh/messages", { message: "Inspect my Docker containers" });
+    assert(terminal(frames, "done"));
+    assert.equal((await api.store.get("fresh")).title, "Inspect my Docker containers");
+    assert.equal(generated, 1);
+    title.resolve("Inspect Docker containers");
+    await bounded(
+      (async () => {
+        while ((await api.store.get("fresh")).title !== "Inspect Docker containers")
+          await new Promise((resolve) => setTimeout(resolve, 2));
+      })(),
+    );
+    const events = await api.journal.listAfter("fresh", "0", 100);
+    const titleEvents = events.filter((event) => event.payload.type === "thread_title");
+    assert.equal(titleEvents.length, 1);
+    assert.equal(titleEvents[0].payload.title, "Inspect Docker containers");
+    assert(
+      events.findIndex((event) => event.payload.type === "done") <
+        events.findIndex((event) => event.payload.type === "thread_title"),
+    );
+    await api.stream("fresh/messages", { message: "Follow-up" });
+    assert.equal(generated, 1);
+    assert.equal((await api.store.get("fresh")).title, "Inspect Docker containers");
   },
 );

@@ -10,6 +10,15 @@ const explain = (error: unknown) =>
 export function useWingman(connection: Connection | null) {
   const api = useMemo(() => (connection ? createApi(connection) : null), [connection]);
   const [threads, setThreads] = useState<Thread[]>([]);
+  // Generated titles are final: replay and older catalogue requests must not restore a fallback.
+  const [titles, setTitles] = useState<ReadonlyMap<string, string>>(new Map());
+  const titledThreads = useMemo(
+    () =>
+      threads.map((thread) =>
+        titles.has(thread.id) ? { ...thread, title: titles.get(thread.id)! } : thread,
+      ),
+    [threads, titles],
+  );
   const [catalogueCursor, setCatalogueCursor] = useState<string | null>(null);
   const [threadId, setThreadId] = useState<string | null>(selectedThread);
   const [history, setHistory] = useState<History>({ messages: [], nextCursor: null });
@@ -62,6 +71,7 @@ export function useWingman(connection: Connection | null) {
     const controller = new AbortController();
     lifecycle.current = controller;
     setThreads([]);
+    setTitles(new Map());
     setCatalogueCursor(null);
     if (!api) {
       setThreadId(null);
@@ -171,6 +181,10 @@ export function useWingman(connection: Connection | null) {
       },
       onEvent: (event) => {
         if (signal.aborted) return;
+        if (event.type === "thread_title") {
+          setTitles((old) => new Map(old).set(threadId, event.title));
+          return;
+        }
         seenRuns.current.add(event.runId);
         if (seenRuns.current.size > 500)
           seenRuns.current.delete(seenRuns.current.values().next().value!);
@@ -220,7 +234,7 @@ export function useWingman(connection: Connection | null) {
     return success;
   };
   return {
-    threads,
+    threads: titledThreads,
     threadId,
     history,
     pending,
@@ -241,6 +255,11 @@ export function useWingman(connection: Connection | null) {
         if (!api) return;
         await api.remove(id, signal);
         if (signal.aborted) return;
+        setTitles((old) => {
+          const next = new Map(old);
+          next.delete(id);
+          return next;
+        });
         if (threadId === id) select(null);
         await refreshThreads();
       }, lifecycle.current),

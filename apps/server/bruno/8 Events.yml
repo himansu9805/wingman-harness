@@ -29,3 +29,5 @@ docs: |-
   Snapshots include every task, including pending/blocked tasks, results and per-child usage/timing.
   run.metadata.turn.usage already includes workers: do not add task totals to it.
   Parallel worker durations overlap. Use plan.elapsedMs or run turn timing as wall time.
+  thread_title events contain the generated title. Update the catalogue/header without changing turn status.
+  Title generation is independent and may complete after done or approval; retain the SSE subscription.

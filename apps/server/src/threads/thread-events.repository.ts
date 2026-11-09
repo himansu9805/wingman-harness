@@ -1,9 +1,10 @@
 import type { RunMetadata } from "../agent/run-metadata";
 import type { Pool } from "pg";
-import type { ThreadRepository } from "./thread.repository";
+import type { MemoryThreadRepository } from "./thread.repository";
 import type { PendingApproval, TurnEvent } from "@wingman/core/turns";
 
 export type ThreadEventPayload =
+  | { type: "thread_title"; title: string }
   | { type: "run"; metadata: RunMetadata }
   | TurnEvent
   | { type: "approval"; approvals: PendingApproval[] }
@@ -25,6 +26,9 @@ export interface ThreadEventsRepository {
   init(): Promise<void>;
 
   append(threadId: string, runId: string, payload: ThreadEventPayload): Promise<StoredThreadEvent>;
+
+  /** Atomically replace a claimed fallback and publish its durable title event. */
+  completeTitle(threadId: string, claimId: string, runId: string, title: string): Promise<boolean>;
 
   listAfter(threadId: string, sequence: string, limit: number): Promise<StoredThreadEvent[]>;
 
@@ -115,6 +119,25 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
     if (!result.rows[0]) throw new Error("Thread is missing or deleting");
     return eventRecord(result.rows[0]);
   }
+  async completeTitle(
+    threadId: string,
+    claimId: string,
+    runId: string,
+    title: string,
+  ): Promise<boolean> {
+    const result = await (
+      await this.pool()
+    ).query(
+      `WITH titled AS (
+        UPDATE threads SET title = $3, title_generation_id = NULL, event_sequence = event_sequence + 1
+        WHERE id = $1 AND deleting = false AND title_generation_id = $2::uuid RETURNING event_sequence
+      ) INSERT INTO thread_events (thread_id, sequence, run_id, payload)
+        SELECT $1, event_sequence, $4::uuid, $5::jsonb FROM titled RETURNING sequence`,
+      [threadId, claimId, title, runId, JSON.stringify({ type: "thread_title", title })],
+    );
+    return result.rows.length > 0;
+  }
+
   async listAfter(threadId: string, sequence: string, limit: number): Promise<StoredThreadEvent[]> {
     validatePage(sequence, limit);
     const result = await (
@@ -165,7 +188,7 @@ export class MemoryThreadEventsRepository implements ThreadEventsRepository {
   private readonly rows = new Map<string, StoredThreadEvent[]>();
   private readonly sequences = new Map<string, bigint>();
   private closed = false;
-  constructor(private readonly threads: ThreadRepository) {}
+  constructor(private readonly threads: MemoryThreadRepository) {}
   private assertOpen() {
     if (this.closed) throw new Error("Event repository is closed");
   }
@@ -180,6 +203,14 @@ export class MemoryThreadEventsRepository implements ThreadEventsRepository {
     this.assertOpen();
     const thread = await this.threads.get(threadId);
     if (!thread || thread.deleting) throw new Error("Thread is missing or deleting");
+    return this.storeEvent(threadId, runId, payload);
+  }
+
+  private storeEvent(
+    threadId: string,
+    runId: string,
+    payload: ThreadEventPayload,
+  ): StoredThreadEvent {
     const sequence = (this.sequences.get(threadId) ?? 0n) + 1n;
     this.sequences.set(threadId, sequence);
     const record = {
@@ -194,6 +225,18 @@ export class MemoryThreadEventsRepository implements ThreadEventsRepository {
     this.rows.set(threadId, rows);
     return structuredClone(record);
   }
+  async completeTitle(
+    threadId: string,
+    claimId: string,
+    runId: string,
+    title: string,
+  ): Promise<boolean> {
+    this.assertOpen();
+    if (!this.threads.completeTitle(threadId, claimId, title)) return false;
+    this.storeEvent(threadId, runId, { type: "thread_title", title });
+    return true;
+  }
+
   async listAfter(threadId: string, sequence: string, limit: number): Promise<StoredThreadEvent[]> {
     this.assertOpen();
     validatePage(sequence, limit);
