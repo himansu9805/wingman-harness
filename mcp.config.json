@@ -1,14 +1,14 @@
 {
-  "mcpServers": {},
-  "agents": {
-    "browser": {
-      "mcpServers": {
-        "agent-browser": {
-          "transport": "stdio",
-          "command": "agent-browser",
-          "args": ["mcp", "--config", "./agent-browser.json"]
-        }
+  "mcpServers": {
+    "openserp": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["--no-install", "openserp-mcp", "--stdio"],
+      "env": {
+        "OPENSERP_BACKEND": "oss",
+        "OPENSERP_BASE_URL": "http://127.0.0.1:7000"
       }
     }
-  }
+  },
+  "agents": {}
 }

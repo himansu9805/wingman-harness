@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AgentRegistry } from "../src/agents/registry.ts";
 import {
-  createDefaultAgentDefinition,
+  createOrchestratorAgentDefinition,
   analystAgentDefinition,
 } from "../src/agents/builtins/index.ts";
 import { AgentToolCatalogue } from "../src/agents/catalogue.ts";
@@ -153,10 +153,11 @@ test("ambiguous names and duplicate catalogue entries fail instead of overriding
   assert.throws(() => catalogue.resolve("analyst", ["same"], ["same"]), /Duplicate tool name/);
 });
 
-test("default baseline has explicit tool names and no automatic global MCP grants", () => {
-  const basic = createDefaultAgentDefinition();
-  const scheduled = createDefaultAgentDefinition(true);
-  assert.ok(basic.capabilities.useGlobalTools.includes("exec_bash_command"));
+test("orchestrator baseline excludes execution tools and automatic global MCP grants", () => {
+  const basic = createOrchestratorAgentDefinition();
+  const scheduled = createOrchestratorAgentDefinition(true);
+  assert.ok(!basic.capabilities.useGlobalTools.includes("exec_bash_command"));
+  assert.ok(!basic.capabilities.useGlobalTools.some((name) => name.startsWith("browser_")));
   assert.ok(!basic.capabilities.useGlobalTools.includes("schedule_task"));
   assert.ok(scheduled.capabilities.useGlobalTools.includes("schedule_task"));
   assert.deepEqual(basic.capabilities.useGlobalMcpServers, []);

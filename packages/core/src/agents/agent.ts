@@ -37,6 +37,10 @@ async function buildAgentGraph(
   if (new Set(toolNames).size !== toolNames.length) {
     throw new Error(`Duplicate tools for agent "${definition.id}"`);
   }
+  for (const name of Object.keys(definition.execution?.toolCallLimits ?? {})) {
+    if (!toolNames.includes(name))
+      throw new Error(`Tool-call limit references unavailable tool "${name}"`);
+  }
   const skillIndex = renderSkillIndex(skills);
   const model = definition.model === "fast" ? runtime.models.fast : runtime.models.powerful;
 
@@ -86,13 +90,13 @@ export class Agent {
    * execution namespaces are supplied by the orchestration layer.
    *
    * @param runtime The application-owned services and validated role registry.
-   * @param agentId Registered role ID; existing entry points use "default".
+   * @param agentId Registered role ID; existing entry points use "orchestrator".
    * @param execution Trusted worker middleware for durable budgets and tool outcomes.
    * @throws If the role is unknown, discovery fails, or shutdown has started.
    */
   static async create(
     runtime: CoreRuntime,
-    agentId = "default",
+    agentId = "orchestrator",
     execution: readonly AnyAgentMiddleware[] = [],
   ): Promise<Agent> {
     runtime.assertOpen();

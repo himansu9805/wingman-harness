@@ -52,7 +52,7 @@ export function buildSystemPrompt(context: AgentPromptContext): string {
     sections.push(`# MCP tools
 - Use the exact tool names listed, including their server prefixes.
 - For web browsing, inspect returned page contents and follow only links actually returned by tools.
-- Prefer reliable sources and stop after at most 5 pages.`);
+- Prefer reliable sources and stop when the requested evidence is sufficient or a configured execution limit is reached.`);
   }
   if ([...tools].some((name) => name === "schedule_task" || name === "schedule_recurring_task")) {
     sections.push(`# Scheduling

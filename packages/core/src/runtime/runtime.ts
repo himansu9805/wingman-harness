@@ -78,7 +78,7 @@ export class CoreRuntime {
     });
     for (const definition of configuration.definitions) this.agents.register(definition);
     // Every existing CLI/server entry point uses this agent unless given an ID.
-    this.agents.get("default");
+    this.agents.get("orchestrator");
     this.delegations = new DelegationRunner(
       this.agents,
       delegationStore,

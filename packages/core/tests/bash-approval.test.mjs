@@ -8,7 +8,7 @@ import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { MemorySaver } from "@langchain/langgraph";
 import { createAgent } from "langchain";
 import { bashTools } from "../src/capabilities/commands.ts";
-import { createDefaultAgentDefinition } from "../src/agents/builtins/index.ts";
+import { createOrchestratorAgentDefinition } from "../src/agents/builtins/index.ts";
 import { buildSystemPrompt } from "../src/agents/prompt.ts";
 import { startTurn, resumeTurn, getPendingApprovals } from "../src/conversations/turn.ts";
 
@@ -43,13 +43,13 @@ class ShellModel extends BaseChatModel {
 
 function agent() {
   return {
-    id: "default",
+    id: "orchestrator",
     app: createAgent({
       model: new ShellModel({}),
       tools: bashTools,
       checkpointer: new MemorySaver(),
       systemPrompt: buildSystemPrompt({
-        definition: createDefaultAgentDefinition(),
+        definition: createOrchestratorAgentDefinition(),
         toolNames: ["exec_bash_command"],
         memoryIndex: "",
         skillIndex: "",
@@ -62,7 +62,7 @@ const options = () => ({ signal: AbortSignal.timeout(10_000) });
 
 test("system instructions distinguish blocked commands from explicit retries after decline", () => {
   const prompt = buildSystemPrompt({
-    definition: createDefaultAgentDefinition(),
+    definition: createOrchestratorAgentDefinition(),
     toolNames: ["exec_bash_command"],
     memoryIndex: "",
     skillIndex: "",

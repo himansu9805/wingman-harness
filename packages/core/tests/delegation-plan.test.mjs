@@ -15,7 +15,7 @@ test("plans validate the entire DAG before execution", async () => {
   const f = await createDelegationRuntime();
   try {
     const check = (tasks) =>
-      validatePlan({ tasks }, f.runtime.agents.get("default"), f.runtime.agents);
+      validatePlan({ tasks }, f.runtime.agents.get("orchestrator"), f.runtime.agents);
     assert.equal(check([task("review", ["research"]), task("research")]).tasks.length, 2);
     for (const tasks of [
       [task("a"), task("a")],
@@ -403,7 +403,7 @@ test("plan cancellation intent survives interrupted cleanup and prevents further
     assert.equal(record.status, "cancelling");
     await assert.rejects(
       f.runtime.plans.run(
-        "default",
+        "orchestrator",
         record.request,
         {
           conversationId: record.conversationId,
@@ -454,7 +454,7 @@ test("plan recovery reuses completed children after interrupted aggregation and 
     assert.equal(record.status, "running");
     assert.equal(calls, 1);
     const recovered = await f.runtime.plans.run(
-      "default",
+      "orchestrator",
       record.request,
       {
         conversationId: record.conversationId,

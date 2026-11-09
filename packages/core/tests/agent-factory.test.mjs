@@ -12,7 +12,8 @@ import { CoreRuntime } from "../src/runtime/runtime.ts";
 import {
   analystAgentDefinition,
   operatorAgentDefinition,
-  createDefaultAgentDefinition,
+  researcherAgentDefinition,
+  createOrchestratorAgentDefinition,
 } from "../src/agents/builtins/index.ts";
 import { createLocalTools, createLoadSkillTool } from "../src/capabilities/catalogue.ts";
 import { startTurn, resumeTurn } from "../src/conversations/turn.ts";
@@ -78,7 +79,7 @@ async function fixture({
   const runtime = await CoreRuntime.create({
     async openMcp() {
       return {
-        serverIds: ["docs"],
+        serverIds: ["docs", "openserp"],
         privateServerIds(id) {
           return id === "developer" ? ["github"] : [];
         },
@@ -99,7 +100,7 @@ async function fixture({
     },
     async loadConfiguration() {
       return {
-        definitions: definitions ?? [role("default", {}, "routed"), role("analyst")],
+        definitions: definitions ?? [role("orchestrator", {}, "routed"), role("analyst")],
         globalTools,
         agentTools,
         models: { fast, powerful, routingMiddleware },
@@ -130,13 +131,16 @@ async function fixture({
 
 test("default and specialist use distinct prompts, models and tools on one runtime", async () => {
   const { runtime, trace } = await fixture({
-    definitions: [role("default", { useGlobalTools: ["read_file"] }, "routed"), role("analyst")],
+    definitions: [
+      role("orchestrator", { useGlobalTools: ["read_file"] }, "routed"),
+      role("analyst"),
+    ],
     globalTools: [simpleTool("read_file"), simpleTool("write_file")],
   });
   try {
     const general = await Agent.create(runtime);
     const specialist = await Agent.create(runtime, "analyst");
-    assert.equal(general.id, "default");
+    assert.equal(general.id, "orchestrator");
     assert.equal(specialist.id, "analyst");
     assert.equal(
       (await startTurn(general, "general input", "general-thread", options())).text,
@@ -149,11 +153,11 @@ test("default and specialist use distinct prompts, models and tools on one runti
     assert.equal(trace.routing, 1);
     assert.deepEqual(trace.models[0].tools, ["read_file"]);
     assert.deepEqual(trace.models[1].tools, []);
-    assert.match(trace.models[0].prompt, /Instructions for default/);
+    assert.match(trace.models[0].prompt, /Instructions for orchestrator/);
     assert.match(trace.models[1].prompt, /Instructions for analyst/);
     assert.doesNotMatch(
       trace.models[1].prompt,
-      /Instructions for default|PRIVATE MEMORY|# Memory|# Scheduling|# Shell|# Skills/,
+      /Instructions for orchestrator|PRIVATE MEMORY|# Memory|# Scheduling|# Shell|# Skills/,
     );
     assert.equal(trace.memory, 0);
     assert.ok(!trace.models[1].messages.some((message) => message.text === "general input"));
@@ -165,7 +169,7 @@ test("default and specialist use distinct prompts, models and tools on one runti
 
 test("fixed fast and powerful agents never invoke routing", async () => {
   const { runtime, trace } = await fixture({
-    definitions: [role("default", {}, "fast"), role("analyst")],
+    definitions: [role("orchestrator", {}, "fast"), role("analyst")],
   });
   try {
     await startTurn(await Agent.create(runtime), "hello", "fast-thread", options());
@@ -193,7 +197,7 @@ test("unknown agent fails before MCP discovery or model invocation", async () =>
 
 test("read-only memory exposes the index and recall without write instructions", async () => {
   const { runtime, trace } = await fixture({
-    definitions: [role("default", { memory: "read", useGlobalTools: ["recall_memory"] })],
+    definitions: [role("orchestrator", { memory: "read", useGlobalTools: ["recall_memory"] })],
     globalTools: [simpleTool("recall_memory"), simpleTool("remember")],
   });
   try {
@@ -216,7 +220,7 @@ test("private tools and scoped MCP grants reach only the requested agent graph",
     mcp: [{ serverId: "github", tools: ["get_issue"] }],
   });
   const { runtime, trace } = await fixture({
-    definitions: [role("default"), definition],
+    definitions: [role("orchestrator"), definition],
     globalTools: [simpleTool("read_file"), simpleTool("write_file")],
     agentTools: { developer: [simpleTool("run_tests")] },
     mcpTools: [
@@ -254,7 +258,7 @@ test("skill prompt and tool loader are restricted to permitted metadata", async 
     { name: "hidden", description: "HIDDEN DESCRIPTION", path: "/hidden/SKILL.md" },
   ];
   const { runtime, trace } = await fixture({
-    definitions: [role("default", { useGlobalTools: ["load_skill"], skills: ["review"] })],
+    definitions: [role("orchestrator", { useGlobalTools: ["load_skill"], skills: ["review"] })],
     globalTools: [
       tool(
         async () => {
@@ -307,7 +311,7 @@ test("skill prompt and tool loader are restricted to permitted metadata", async 
 
 test("empty installed skill catalogue does not expose load_skill", async () => {
   const { runtime, trace } = await fixture({
-    definitions: [role("default", { useGlobalTools: ["load_skill"], skills: "all" })],
+    definitions: [role("orchestrator", { useGlobalTools: ["load_skill"], skills: "all" })],
     globalTools: [createLoadSkillTool([])],
   });
   try {
@@ -319,10 +323,15 @@ test("empty installed skill catalogue does not expose load_skill", async () => {
   }
 });
 
-test("default graph preserves production shell approval and resume", async () => {
+test("operator graph preserves production shell approval and resume", async () => {
   const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('phase2b')")}`;
   const { runtime, trace } = await fixture({
-    definitions: [createDefaultAgentDefinition(), analystAgentDefinition, operatorAgentDefinition],
+    definitions: [
+      createOrchestratorAgentDefinition(),
+      analystAgentDefinition,
+      operatorAgentDefinition,
+      researcherAgentDefinition,
+    ],
     globalTools: createLocalTools([]),
     respond(messages) {
       const result = messages.filter(ToolMessage.isInstance).at(-1);
@@ -342,7 +351,7 @@ test("default graph preserves production shell approval and resume", async () =>
     },
   });
   try {
-    const agent = await Agent.create(runtime);
+    const agent = await Agent.create(runtime, "operator");
     const paused = await startTurn(agent, "run harmless command", "shell-thread", options());
     assert.equal(paused.kind, "paused");
     const answers = Object.fromEntries(paused.approvals.map((item) => [item.id, true]));

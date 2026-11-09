@@ -7,16 +7,18 @@ import { CheckCircle2, Circle, Clock, GitBranch, OctagonAlert, Play, XCircle } f
 import * as stylex from "@stylexjs/stylex";
 import type { ThreadEvent } from "../api/types";
 import type { DelegationTask, DelegationPlanSnapshot } from "../api/delegation";
-import { delegatedPlans, taskCalls, taskStatus, tokenLabel } from "../state/delegation";
+import { taskCalls, taskStatus, tokenLabel } from "../state/delegation";
 import { duration } from "../state/run-summary";
 import { ToolCalls } from "./ToolCalls";
 
-export function DelegatedWork({ events }: { events: ThreadEvent[] }) {
-  return delegatedPlans(events).map((plan) => (
-    <Plan key={plan.planId} plan={plan} events={events} />
-  ));
-}
-function Plan({ plan, events }: { plan: DelegationPlanSnapshot; events: ThreadEvent[] }) {
+/** A single plan rendered at its parent tool call's position in the turn. */
+export function DelegatedWork({
+  plan,
+  events,
+}: {
+  plan: DelegationPlanSnapshot;
+  events: ThreadEvent[];
+}) {
   const complete = plan.tasks.filter((task) => task.status === "completed").length;
   return (
     <VStack gap={2} xstyle={styles.plan}>

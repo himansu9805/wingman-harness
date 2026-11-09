@@ -1,18 +1,18 @@
 import type { AgentModule } from "../module";
-import type { McpConnections } from "../../integrations/mcp/client";
-import { createDefaultAgentDefinition } from "./coordinator";
+import { createOrchestratorAgentDefinition } from "./orchestrator";
 import { analystAgentDefinition } from "./analyst";
 import { operatorAgentDefinition } from "./operator";
-import { createBrowserAgentModule } from "./browser";
+import { researcherAgentModule } from "./researcher";
 
-export { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition };
+export { createOrchestratorAgentDefinition, analystAgentDefinition, operatorAgentDefinition };
+export { researcherAgentDefinition, researcherAgentModule } from "./researcher";
 
 /** The single registration point for built-in role modules. */
-export function builtinAgentModules(schedulerEnabled: boolean, mcp: McpConnections): AgentModule[] {
+export function builtinAgentModules(schedulerEnabled: boolean): AgentModule[] {
   return [
-    { definition: createDefaultAgentDefinition(schedulerEnabled) },
-    { definition: analystAgentDefinition, delegatedBy: ["default"] },
-    { definition: operatorAgentDefinition, delegatedBy: ["default"] },
-    createBrowserAgentModule(mcp),
+    { definition: createOrchestratorAgentDefinition(schedulerEnabled) },
+    { definition: analystAgentDefinition, delegatedBy: ["orchestrator"] },
+    { definition: operatorAgentDefinition, delegatedBy: ["orchestrator"] },
+    researcherAgentModule,
   ];
 }

@@ -240,7 +240,7 @@ function terminal(frames, type) {
 
 function fakeAgent(run) {
   return {
-    id: "default",
+    id: "orchestrator",
     async cancelDelegations() {},
     app: {
       graph: { getState: async () => ({ tasks: [] }) },

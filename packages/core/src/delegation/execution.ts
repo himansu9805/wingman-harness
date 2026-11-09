@@ -23,11 +23,12 @@ export function executionMiddleware(
   taskId: string,
   owner: string,
   maxModelCalls: number,
+  toolCallLimits: Readonly<Record<string, number>> = {},
 ) {
   return createMiddleware({
     name: "DurableWorkerExecution",
     wrapModelCall: async (request, handler) => {
-      await store.update(taskId, (task) => {
+      const task = await store.update(taskId, (task) => {
         owned(task, owner);
         if (task.tools.some((tool) => tool.status === "uncertain" || tool.status === "running"))
           throw new RecoveryRequired("A previous tool outcome is uncertain");
@@ -35,9 +36,27 @@ export function executionMiddleware(
           throw new DelegationRejected("Specialist model-call budget exhausted");
         return { ...task, modelCalls: task.modelCalls + 1 };
       });
-      const response = await handler(request);
+      const remaining = Object.fromEntries(
+        Object.entries(toolCallLimits).map(([name, limit]) => [
+          name,
+          Math.max(0, limit - task.tools.filter((entry) => entry.name === name).length),
+        ]),
+      );
+      const modelRequest = Object.keys(remaining).length
+        ? {
+            ...request,
+            tools: request.tools.filter(
+              (tool) =>
+                !("name" in tool) || typeof tool.name !== "string" || remaining[tool.name] !== 0,
+            ),
+            systemMessage: request.systemMessage.concat(
+              `\n# Remaining tool-call allowances\n${JSON.stringify(remaining)}\nThese count attempts, including errors, across this task. Tools with zero remaining calls are unavailable. Use other permitted tools to assess existing evidence or return supported findings and gaps. Do not bypass an exhausted capability through another tool.`,
+            ),
+          }
+        : request;
+      const response = await handler(modelRequest);
       for (const call of response.tool_calls ?? []) {
-        if (!request.tools.some((tool) => "name" in tool && tool.name === call.name)) {
+        if (!modelRequest.tools.some((tool) => "name" in tool && tool.name === call.name)) {
           throw new DelegationRejected("The specialist requested an unavailable tool");
         }
       }
@@ -58,6 +77,7 @@ export function executionMiddleware(
         return mapStoredMessageToChatMessage(previous.result!) as ToolMessage;
       if (previous && previous.status !== "waiting_approval")
         throw new RecoveryRequired("Tool outcome is uncertain; automatic replay is disabled");
+      let budgetResult: ToolMessage | undefined;
       await store.update(taskId, (task) => {
         owned(task, owner);
         const entry = task.tools.find((item) => item.toolCallId === id);
@@ -69,6 +89,18 @@ export function executionMiddleware(
         } else {
           if (task.tools.length >= 32)
             throw new DelegationRejected("Specialist tool-call budget exhausted");
+          const limit = toolCallLimits[name];
+          if (
+            limit !== undefined &&
+            task.tools.filter((item) => item.name === name).length >= limit
+          ) {
+            budgetResult = new ToolMessage({
+              name,
+              tool_call_id: id,
+              status: "error",
+              content: `Tool-call allowance exhausted for ${name} (${limit} attempts). This call was not dispatched. Use existing evidence and other available tools, or report missing information.`,
+            });
+          }
           task.tools.push({
             toolCallId: id,
             name,
@@ -79,13 +111,14 @@ export function executionMiddleware(
               /^https?:\/\//.test(args.url)
                 ? args.url
                 : null,
-            status: "running",
+            status: budgetResult ? "completed" : "running",
             ownerToken: owner,
-            result: null,
+            result: budgetResult ? budgetResult.toDict() : null,
           });
         }
         return task;
       });
+      if (budgetResult) return budgetResult;
       try {
         let result;
         try {
@@ -104,12 +137,26 @@ export function executionMiddleware(
         if (!ToolMessage.isInstance(result))
           throw new RecoveryRequired("Worker tool returned an unsupported state mutation");
         if (JSON.stringify(result.toDict()).length > 64000) {
-          result = new ToolMessage({
-            name,
-            tool_call_id: id,
-            status: result.status,
-            content: JSON.stringify(result.content).slice(0, 16000) + "\n[Tool result truncated]",
-          });
+          const status = result.status;
+          let text = result.text;
+          let truncated = text.length > 16000;
+          const message = () =>
+            new ToolMessage({
+              name,
+              tool_call_id: id,
+              status,
+              content: text
+                ? text.slice(0, 16000) + (truncated ? "\n[Tool result truncated]" : "")
+                : "[Non-text tool content exceeds the durable result limit and was omitted.]",
+              artifact: { omitted: true },
+            });
+          let bounded = message();
+          while (JSON.stringify(bounded.toDict()).length > 64000 && text.length) {
+            text = text.slice(0, Math.floor(text.length / 2));
+            truncated = true;
+            bounded = message();
+          }
+          result = bounded;
         }
         const stored = result.toDict();
         await store.update(taskId, (task) => {

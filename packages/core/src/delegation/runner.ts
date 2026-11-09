@@ -246,7 +246,13 @@ export class DelegationRunner {
         throw new DelegationRejected("Specialist processing-time budget exhausted");
       const child = await this.createAgent(
         task.request.agentId,
-        executionMiddleware(this.store, task.taskId, owner, budget.maxModelCalls),
+        executionMiddleware(
+          this.store,
+          task.taskId,
+          owner,
+          budget.maxModelCalls,
+          this.registry.get(task.request.agentId).execution?.toolCallLimits,
+        ),
       );
       const options = {
         signal,
@@ -379,7 +385,13 @@ export class DelegationRunner {
     }
     const child = await this.createAgent(
       snapshot.request.agentId,
-      executionMiddleware(this.store, snapshot.taskId, randomUUID(), budget.maxModelCalls),
+      executionMiddleware(
+        this.store,
+        snapshot.taskId,
+        randomUUID(),
+        budget.maxModelCalls,
+        this.registry.get(snapshot.request.agentId).execution?.toolCallLimits,
+      ),
     );
     const state = await child.app.graph.getState({
       configurable: { thread_id: snapshot.checkpointThreadId },

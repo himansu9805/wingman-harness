@@ -1,14 +1,16 @@
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
 import "../setup.mjs";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { MemorySaver } from "@langchain/langgraph";
 import { createMiddleware } from "langchain";
 import { CoreRuntime } from "../../packages/core/src/runtime/runtime.ts";
+import { assembleAgentModules } from "../../packages/core/src/agents/module.ts";
 import { Agent } from "../../packages/core/src/agents/agent.ts";
 import {
-  createDefaultAgentDefinition,
-  analystAgentDefinition,
   operatorAgentDefinition,
+  builtinAgentModules,
 } from "../../packages/core/src/agents/builtins/index.ts";
 import { createLocalTools } from "../../packages/core/src/capabilities/catalogue.ts";
 import { MemoryDelegationStore } from "../../packages/core/src/delegation/storage/store.ts";
@@ -19,7 +21,7 @@ class DelegationModel extends BaseChatModel {
     child,
     args,
     boundTools = [],
-    summarize = (result) => `Coordinator: ${result.text}`,
+    summarize = (result) => `Orchestrator: ${result.text}`,
   ) {
     super({});
     Object.assign(this, { trace, child, args, boundTools, summarize });
@@ -35,7 +37,7 @@ class DelegationModel extends BaseChatModel {
       .filter(SystemMessage.isInstance)
       .map((message) => message.text)
       .join("\n");
-    const child = prompt.includes("# Agent: analyst") || prompt.includes("# Agent: operator");
+    const child = !prompt.includes("# Agent: orchestrator");
     this.trace.calls.push({
       child,
       messages,
@@ -77,6 +79,8 @@ export async function createDelegationRuntime({
   maxConcurrency = 2,
   maxTasks = 8,
   operatorTools = [],
+  researchTools = [],
+  researchExecution,
   executionResources = [],
   summarize,
   child = async () => "Specialist analysis",
@@ -96,7 +100,27 @@ export async function createDelegationRuntime({
     [],
     summarize,
   );
-  const definition = createDefaultAgentDefinition();
+  const { definitions } = assembleAgentModules(builtinAgentModules(false));
+  if (researchExecution) {
+    const researcher = definitions.find((definition) => definition.id === "researcher");
+    researcher.execution = { ...researcher.execution, ...researchExecution };
+  }
+  const researcher = definitions.find((definition) => definition.id === "researcher");
+  const availableResearchTools = researcher.capabilities.useGlobalMcpServers.flatMap((grant) =>
+    grant.tools.map((name) => {
+      const exposed = `mcp__global__${grant.serverId}__${name}`;
+      return (
+        researchTools.find((tool) => tool.name === exposed) ??
+        tool(
+          async () => {
+            throw new Error(`Unexpected fixture tool invocation: ${exposed}`);
+          },
+          { name: exposed, description: exposed, schema: z.record(z.string(), z.unknown()) },
+        )
+      );
+    }),
+  );
+  const definition = definitions.find((definition) => definition.id === "orchestrator");
   definition.delegation.timeoutMs = timeoutMs;
   definition.delegation.maxModelCalls = maxModelCalls;
   definition.delegation.maxConcurrency = maxConcurrency;
@@ -104,12 +128,14 @@ export async function createDelegationRuntime({
   const runtime = await CoreRuntime.create({
     async openMcp() {
       return {
-        serverIds: [],
+        serverIds: ["openserp"],
         privateServerIds() {
           return [];
         },
-        async getTools() {
-          return [];
+        async getTools(_id, access) {
+          return access.useGlobalMcpServers.some((grant) => grant.serverId === "openserp")
+            ? availableResearchTools
+            : [];
         },
         async close() {},
       };
@@ -123,7 +149,9 @@ export async function createDelegationRuntime({
         executionResources,
         definitions: [
           definition,
-          analystAgentDefinition,
+          ...definitions.filter(
+            (definition) => !["orchestrator", "operator"].includes(definition.id),
+          ),
           operatorTools.length
             ? {
                 ...operatorAgentDefinition,

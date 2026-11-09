@@ -123,7 +123,7 @@ test("approval waiting survives a new runner and does not reset persisted model 
       (id) => f.saver.deleteThread(id),
     );
     const result = await replacement.resume(
-      "default",
+      "orchestrator",
       task.taskId,
       Object.fromEntries(task.pendingApprovals.map((item) => [item.id, false])),
       { emit() {} },
@@ -184,7 +184,7 @@ for (const outcome of ["waiting_approval", "completed"])
       }));
       const calls = f.trace.calls.length;
       const recovered = await f.runtime.delegations.run(
-        "default",
+        "orchestrator",
         task.request,
         {
           planId: task.planId,
@@ -215,7 +215,7 @@ test("expired tasks with an uncertain action are never restarted or automaticall
     };
     const { task } = await f.store.claim({
       ...identity,
-      parentAgentId: "default",
+      parentAgentId: "orchestrator",
       request: args,
       requestHash: createHash("sha256").update(JSON.stringify(args)).digest("hex"),
     });
@@ -234,10 +234,12 @@ test("expired tasks with an uncertain action are never restarted or automaticall
         },
       ],
     }));
-    const recovered = await f.runtime.delegations.run("default", args, identity, { emit() {} });
+    const recovered = await f.runtime.delegations.run("orchestrator", args, identity, {
+      emit() {},
+    });
     assert.equal(recovered.status, "recovery_required");
     assert.equal(f.trace.calls.length, 0);
-    const repeated = await f.runtime.delegations.run("default", args, identity, { emit() {} });
+    const repeated = await f.runtime.delegations.run("orchestrator", args, identity, { emit() {} });
     assert.equal(repeated.status, "recovery_required");
     await f.runtime.delegations.cancelConversation("uncertain");
     assert.equal((await f.store.get(task.taskId)).status, "cancelled");
@@ -307,7 +309,7 @@ test("long approval waits do not consume processing budget, but exhausted proces
         ...(exhausted ? { processingMs: 30000 } : {}),
       }));
       const response = await f.runtime.delegations.resume(
-        "default",
+        "orchestrator",
         task.taskId,
         Object.fromEntries(task.pendingApprovals.map((item) => [item.id, false])),
         { emit() {} },
@@ -404,7 +406,7 @@ test("a tool that performs an action and then fails cannot be silently retried",
     assert.equal(task.status, "recovery_required");
     assert.equal(task.tools[0].status, "uncertain");
     await f.runtime.delegations.run(
-      "default",
+      "orchestrator",
       task.request,
       {
         planId: task.planId,

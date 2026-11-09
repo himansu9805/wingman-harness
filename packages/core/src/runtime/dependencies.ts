@@ -28,9 +28,9 @@ export const defaultDependencies: RuntimeDependencies = {
     const { listSkills } = await import("../skills/catalogue");
     return listSkills();
   },
-  async loadConfiguration(skills, mcp) {
+  async loadConfiguration(skills) {
     const { loadAgentConfiguration } = await import("./configuration");
-    return loadAgentConfiguration(skills, mcp);
+    return loadAgentConfiguration(skills);
   },
   async readSkill(skill) {
     const { loadSkillContent } = await import("../skills/catalogue");

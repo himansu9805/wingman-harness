@@ -134,7 +134,14 @@ export class AgentRegistry {
 
     const registered = Object.freeze({
       ...definition,
-      execution: definition.execution ? Object.freeze({ ...definition.execution }) : undefined,
+      execution: definition.execution
+        ? Object.freeze({
+            ...definition.execution,
+            ...(definition.execution.toolCallLimits
+              ? { toolCallLimits: Object.freeze({ ...definition.execution.toolCallLimits }) }
+              : {}),
+          })
+        : undefined,
       delegation: Object.freeze({
         ...definition.delegation,
         agents: Object.freeze([...definition.delegation.agents]),

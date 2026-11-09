@@ -139,7 +139,7 @@ test("old-plan cleanup belongs to its original prompt even when journaled in the
 });
 test("delegated tasks expand with native buttons, preserve sibling identity and expose included token totals", (t) => {
   t.after(cleanup);
-  const view = render(createElement(DelegatedWork, { events: [plan] }));
+  const view = render(createElement(DelegatedWork, { plan, events: [plan] }));
   assert.match(view.container.textContent, /2 of 2 completed/);
   assert.match(view.container.textContent, /included in the turn total/);
   const trigger = view.getByRole("button", { name: /research.*analyst.*Completed/ });

@@ -12,7 +12,7 @@ function fixture({ closeMcp, ...overrides } = {}) {
     async openMcp() {
       calls.push("tools");
       return {
-        serverIds: [],
+        serverIds: ["openserp"],
         privateServerIds() {
           return [];
         },
@@ -33,15 +33,20 @@ function fixture({ closeMcp, ...overrides } = {}) {
     async loadConfiguration(skills) {
       calls.push("configuration");
       const { createLocalTools } = await import("../src/capabilities/catalogue.ts");
-      const { createDefaultAgentDefinition, analystAgentDefinition, operatorAgentDefinition } =
-        await import("../src/agents/builtins/index.ts");
+      const {
+        createOrchestratorAgentDefinition,
+        analystAgentDefinition,
+        operatorAgentDefinition,
+        researcherAgentDefinition,
+      } = await import("../src/agents/builtins/index.ts");
       const { fastModel, strongModel, modelRouter } =
         await import("../src/integrations/models/router.ts");
       return {
         definitions: [
-          createDefaultAgentDefinition(),
+          createOrchestratorAgentDefinition(),
           analystAgentDefinition,
           operatorAgentDefinition,
+          researcherAgentDefinition,
         ],
         globalTools: createLocalTools(skills),
         models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
