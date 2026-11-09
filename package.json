@@ -19,13 +19,18 @@
     "dev:web": "npm run dev -w @wingman/web",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test:research": "npm run test:research -w @wingman/core"
+    "test:research": "npm run test:research -w @wingman/core",
+    "prepare": "node .husky/install.mjs",
+    "format:staged": "lint-staged",
+    "test:hooks": "node --test tests/git-hooks.test.mjs"
   },
   "keywords": [],
   "author": "",
   "devDependencies": {
     "@types/node": "^26.5.1",
     "concurrently": "^9.0.0",
+    "husky": "9.1.7",
+    "lint-staged": "16.4.0",
     "oxfmt": "0.77.0",
     "tsup": "^8.5.0",
     "tsx": "^4.23.13",
@@ -36,5 +41,8 @@
       "esbuild": "^0.28.2"
     },
     "multer": "^2.5.0"
+  },
+  "lint-staged": {
+    "*": "oxfmt --write --no-error-on-unmatched-pattern"
   }
 }

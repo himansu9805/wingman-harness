@@ -45,6 +45,9 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      - name: Test Git hooks
+        run: npm run test:hooks
+
       # Builds core first: the CLI and server type-check against its output.
       - name: Build
         run: npm run build
