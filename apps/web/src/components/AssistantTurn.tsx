@@ -1,4 +1,4 @@
-import { delegatedPlans } from "../state/delegation";
+import { turnContent } from "../state/turn-content";
 import { DelegatedWork } from "./DelegatedWork";
 import { ChatMessage, ChatMessageBubble } from "@astryxdesign/core/Chat";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
@@ -11,7 +11,7 @@ import { RunSummary } from "./RunSummary";
 import { latestRun } from "../state/run-summary";
 import { ToolCalls } from "./ToolCalls";
 import { ApprovalCard } from "./ApprovalCard";
-import { liveCalls, type TranscriptTurn } from "../state/transcript";
+import { type TranscriptTurn } from "../state/transcript";
 import { toolsWithResults } from "../state/events";
 import type { Wingman } from "../state/useWingman";
 import { Tooltip } from "@astryxdesign/core";
@@ -28,9 +28,7 @@ export function AssistantTurn({
   const running = current && model.activity.phase === "running";
   const route = turn.events.findLast((event) => event.type === "route");
   const scheduled = turn.events.find((event) => event.type === "scheduled");
-  const delegatedCalls = new Set(delegatedPlans(turn.events).map((plan) => plan.parentToolCallId));
-  const visibleCall = (call: import("../api/types").ToolCall) => !delegatedCalls.has(call.id);
-  const calls = liveCalls(turn).filter(visibleCall);
+  const content = turnContent(turn);
   const metadata = latestRun(turn);
   const approvals = current ? model.pending : [];
   if (!turn.messages.length && !turn.events.length && !approvals.length && !running) return null;
@@ -65,25 +63,25 @@ export function AssistantTurn({
               </Text>
             </HStack>
           )}
-          <DelegatedWork events={turn.events} />
-          {turn.messages.map((message) => (
-            <VStack key={message.id} gap={3}>
-              {message.toolCalls?.some(visibleCall) ? (
+          {content.map((item) => {
+            if (item.type === "delegation")
+              return (
+                <DelegatedWork key={`plan-${item.id}`} plan={item.plan} events={turn.events} />
+              );
+            if (item.type === "tools")
+              return (
                 <ToolCalls
-                  calls={toolsWithResults(message.toolCalls.filter(visibleCall), turn.events)}
+                  key={`tools-${item.id}`}
+                  calls={toolsWithResults(item.calls, turn.events)}
                   running={running}
                 />
-              ) : null}
-              {message.text && (
-                <Markdown density="compact" xstyle={styles.answer}>
-                  {message.text}
-                </Markdown>
-              )}
-            </VStack>
-          ))}
-          {calls.length > 0 && (
-            <ToolCalls calls={toolsWithResults(calls, turn.events)} running={running} />
-          )}
+              );
+            return (
+              <Markdown key={`text-${item.id}`} density="compact" xstyle={styles.answer}>
+                {item.text}
+              </Markdown>
+            );
+          })}
           {approvals.length > 0 && (
             <ApprovalCard
               key={approvals.map((a) => a.id).join(",")}
