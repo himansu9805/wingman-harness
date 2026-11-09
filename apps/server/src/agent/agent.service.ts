@@ -1,3 +1,4 @@
+import { ThreadTitles } from "../threads/thread-titles.service";
 import { performance } from "node:perf_hooks";
 import {
   addUsage,
@@ -49,6 +50,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     @Inject(THREAD_REPOSITORY) private readonly threads: ThreadRepository,
     @Inject(THREAD_EVENTS) readonly events: ThreadEventsRepository,
     private readonly runner: TurnRunner,
+    private readonly titles: ThreadTitles,
   ) {}
 
   async onModuleInit() {
@@ -73,8 +75,9 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
 
   async beforeApplicationShutdown() {
     const draining = this.runner.close();
+    const titles = this.titles.close();
     await this.runtime.stopScheduler();
-    await draining;
+    await Promise.all([draining, titles]);
   }
 
   async onApplicationShutdown() {
@@ -148,12 +151,18 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
   async send(threadId: string, message: string) {
     const accepted = await this.runner.accept(threadId, async () => {
       await this.requireThread(threadId);
-      await this.threads.touch(threadId, message);
+      const titleClaim = await this.threads.startMessage(threadId, message);
       return async (runId, signal) => {
-        await this.execute(threadId, runId, signal, async (options) => {
-          await declinePending(this.agent, threadId, options);
-          return startTurn(this.agent, message, threadId, options);
-        });
+        try {
+          await this.execute(threadId, runId, signal, async (options) => {
+            await declinePending(this.agent, threadId, options);
+            return startTurn(this.agent, message, threadId, options);
+          });
+        } finally {
+          // The response/approval boundary precedes optional metadata inference.
+          if (titleClaim && !signal.aborted)
+            this.titles.start(threadId, runId, titleClaim, message);
+        }
       };
     });
     return { runId: accepted.runId };
@@ -350,6 +359,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     return this.runner.exclusive(threadId, async () => {
       if (!(await this.threads.get(threadId))) return;
       await this.threads.markDeleting(threadId);
+      await this.titles.cancel(threadId);
       await deleteThreadState(this.agent, threadId);
       await this.events.delete(threadId);
       await this.threads.delete(threadId);

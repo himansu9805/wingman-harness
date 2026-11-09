@@ -40,6 +40,7 @@ export interface Catalogue {
   nextCursor: string | null;
 }
 export type ThreadEvent = { runId: string; createdAt?: string } & (
+  | { type: "thread_title"; title: string }
   | DelegationPlanSnapshot
   | {
       type: "delegation";

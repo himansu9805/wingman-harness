@@ -1,3 +1,5 @@
+import titlesModule from "../../../server/dist/threads/thread-titles.service.js";
+import titleGeneratorModule from "../../../server/dist/threads/title-generator.js";
 // Disposable local browser-test server: real Nest handlers and approval graph,
 // memory-only persistence, no models, shell commands, user credentials or Postgres.
 import "reflect-metadata";
@@ -172,6 +174,12 @@ Module({
   controllers: [controllerModule.ThreadsController, tasksControllerModule.TasksController],
   providers: [
     serviceModule.AgentService,
+    titlesModule.ThreadTitles,
+    {
+      provide: titleGeneratorModule.TITLE_GENERATOR,
+      useValue: { generate: async () => "Demo conversation" },
+    },
+    { provide: titlesModule.TITLE_TIMEOUT_MS, useValue: 10000 },
     runnerModule.TurnRunner,
     { provide: repositoryModule.THREAD_REPOSITORY, useValue: store },
     { provide: eventsModule.THREAD_EVENTS, useValue: journal },

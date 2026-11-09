@@ -9,6 +9,7 @@ export interface Activity {
 export const emptyActivity: Activity = { phase: "idle", events: [] };
 
 export function applyEvent(state: Activity, event: ThreadEvent): Activity {
+  if (event.type === "thread_title") return state;
   const phase: RunPhase =
     event.type === "run"
       ? (

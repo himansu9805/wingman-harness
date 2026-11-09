@@ -65,6 +65,40 @@ test(
     assert.deepEqual(await reopened.listRuns("b", undefined, 10), []);
     await catalogue.markDeleting("a");
     await assert.rejects(second.append("a", run, { type: "done", text: "bad" }));
+    await catalogue.create("titled");
+    const claims = await Promise.all([
+      catalogue.startMessage("titled", "Inspect Docker"),
+      catalogue.startMessage("titled", "Inspect Docker"),
+    ]);
+    assert.equal(claims.filter(Boolean).length, 1);
+    const claim = claims.find(Boolean);
+    const beforeTitle = await catalogue.get("titled");
+    // A failed event insert must roll back both the title and its sequence allocation.
+    await admin.query(
+      `ALTER TABLE "${schema}".thread_events ADD CONSTRAINT reject_title CHECK (payload->>'type' <> 'thread_title') NOT VALID`,
+    );
+    await assert.rejects(second.completeTitle("titled", claim, run, "Generated title"));
+    assert.equal((await catalogue.get("titled")).title, "Inspect Docker");
+    assert.equal(await second.latest("titled"), "0");
+    await admin.query(`ALTER TABLE "${schema}".thread_events DROP CONSTRAINT reject_title`);
+    const titleResults = await Promise.all([
+      second.completeTitle("titled", claim, run, "Docker inspection"),
+      reopened.completeTitle("titled", claim, run, "Duplicate title"),
+    ]);
+    assert.equal(titleResults.filter(Boolean).length, 1);
+    assert.equal((await second.listAfter("titled", "0", 100)).length, 1);
+    assert.equal((await catalogue.get("titled")).updatedAt, beforeTitle.updatedAt);
+    const reconnected = new threads.PostgresThreadRepository(url.toString());
+    resources.push(reconnected);
+    await reconnected.init();
+    assert.equal(await reconnected.startMessage("titled", "Follow-up"), null);
+    assert.equal((await reconnected.get("titled")).title, (await catalogue.get("titled")).title);
+    await catalogue.delete("titled");
+    await catalogue.create("titled");
+    await catalogue.startMessage("titled", "New conversation query");
+    assert.equal(await second.completeTitle("titled", claim, run, "Stale title"), false);
+    assert.equal((await catalogue.get("titled")).title, "New conversation query");
+
     await catalogue.delete("a");
     assert.deepEqual(await second.listAfter("a", "0", 100), []);
     assert.ok(await catalogue.get("b"));

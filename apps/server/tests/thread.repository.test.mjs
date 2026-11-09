@@ -58,7 +58,7 @@ test("touch assigns only the first provided title, trims and truncates Unicode c
   await repo.create("empty");
   await repo.touch("empty", "   ");
   await repo.touch("empty", "replacement");
-  assert.equal((await repo.get("empty")).title, "");
+  assert.equal((await repo.get("empty")).title, "New conversation");
   await repo.touch("missing", "no implicit creation");
   assert.equal(await repo.get("missing"), null);
 });

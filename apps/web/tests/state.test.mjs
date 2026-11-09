@@ -403,3 +403,56 @@ test("scheduled indicator comes directly from the catalogue without task request
     false,
   );
 });
+
+test("generated title updates the catalogue after completion and survives stale catalogue responses", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    cleanup();
+    globalThis.fetch = original;
+  });
+  localStorage.setItem("wingman.thread", "one");
+  const fixture = apiFixture();
+  const hook = renderHook(() => useWingman(connection));
+  await waitFor(() => assert.equal(hook.result.current.stream, "live"));
+  await waitFor(() => assert.equal(hook.result.current.threads.length, 2));
+  await act(async () => {
+    fixture.emit("one", { type: "done", runId: "run", text: "Finished" });
+    fixture.emit("one", { type: "thread_title", runId: "run", title: "Inspect Docker containers" });
+  });
+  assert.equal(hook.result.current.activity.phase, "done");
+  assert.equal(
+    hook.result.current.threads.find((thread) => thread.id === "one").title,
+    "Inspect Docker containers",
+  );
+  await act(async () => {
+    await hook.result.current.refreshThreads();
+  });
+  assert.equal(
+    hook.result.current.threads.find((thread) => thread.id === "one").title,
+    "Inspect Docker containers",
+  );
+  assert.equal(hook.result.current.activity.phase, "done");
+});
+
+test("title notifications preserve pending approval and never become chat activity", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    cleanup();
+    globalThis.fetch = original;
+  });
+  localStorage.setItem("wingman.thread", "one");
+  const fixture = apiFixture();
+  const hook = renderHook(() => useWingman(connection));
+  await waitFor(() => assert.equal(hook.result.current.stream, "live"));
+  await act(async () => {
+    fixture.emit("one", {
+      type: "approval",
+      runId: "run",
+      approvals: [{ id: "approval", command: "uptime" }],
+    });
+    fixture.emit("one", { type: "thread_title", runId: "run", title: "Check system uptime" });
+  });
+  assert.equal(hook.result.current.activity.phase, "paused");
+  assert.equal(hook.result.current.pending.length, 1);
+  assert(!hook.result.current.activity.events.some((event) => event.type === "thread_title"));
+});

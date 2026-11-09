@@ -1,3 +1,5 @@
+import { ThreadTitles, TITLE_TIMEOUT_MS } from "./threads/thread-titles.service";
+import { TITLE_GENERATOR, titleGenerator } from "./threads/title-generator";
 import { TasksController } from "./tasks/tasks.controller";
 import { TurnRunner } from "./agent/turn-runner.service";
 import { THREAD_EVENTS, PostgresThreadEventsRepository } from "./threads/thread-events.repository";
@@ -13,6 +15,9 @@ import { THREAD_REPOSITORY, PostgresThreadRepository } from "./threads/thread.re
   providers: [
     AgentService,
     TurnRunner,
+    ThreadTitles,
+    { provide: TITLE_GENERATOR, useValue: titleGenerator },
+    { provide: TITLE_TIMEOUT_MS, useValue: 10000 },
     {
       provide: THREAD_EVENTS,
       useFactory: () =>

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
 export const THREAD_REPOSITORY = Symbol("THREAD_REPOSITORY");
@@ -27,13 +28,15 @@ export interface ThreadRepository {
   get(id: string): Promise<ThreadRecord | null>;
   list(options: ListOptions): Promise<ThreadPage>;
   touch(id: string, message?: string): Promise<void>;
+  /** Atomically save the fallback and claim title generation only for the first message. */
+  startMessage(id: string, message: string): Promise<string | null>;
   markDeleting(id: string): Promise<void>;
   delete(id: string): Promise<void>;
   close(): Promise<void>;
 }
 
 function firstTitle(message: string): string {
-  return Array.from(message.trim()).slice(0, 80).join("");
+  return Array.from(message.trim()).slice(0, 80).join("") || "New conversation";
 }
 
 function checkLimit(limit: number): void {
@@ -93,6 +96,7 @@ export class PostgresThreadRepository implements ThreadRepository {
         deleting BOOLEAN NOT NULL DEFAULT false
       )`);
       await pool.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS scheduled JSONB`);
+      await pool.query(`ALTER TABLE threads ADD COLUMN IF NOT EXISTS title_generation_id UUID`);
       await pool.query(`CREATE INDEX IF NOT EXISTS threads_updated_idx
         ON threads (updated_at DESC, id COLLATE "C" DESC) WHERE deleting = false`);
     } catch (error) {
@@ -139,6 +143,19 @@ export class PostgresThreadRepository implements ThreadRepository {
     );
   }
 
+  async startMessage(id: string, message: string): Promise<string | null> {
+    const claim = randomUUID();
+    const result = await (
+      await this.pool()
+    ).query<{ title_generation_id: string | null }>(
+      `UPDATE threads SET updated_at = NOW(), title = COALESCE(title, $2),
+       title_generation_id = CASE WHEN title IS NULL THEN $3::uuid ELSE title_generation_id END
+       WHERE id = $1 AND deleting = false RETURNING title_generation_id`,
+      [id, firstTitle(message), claim],
+    );
+    return result.rows[0]?.title_generation_id === claim ? claim : null;
+  }
+
   async markDeleting(id: string): Promise<void> {
     await (await this.pool()).query(`UPDATE threads SET deleting = true WHERE id = $1`, [id]);
   }
@@ -158,6 +175,7 @@ export class PostgresThreadRepository implements ThreadRepository {
 export class MemoryThreadRepository implements ThreadRepository {
   private readonly rows = new Map<string, Omit<ThreadRecord, "title"> & { title: string | null }>();
   private closed = false;
+  private readonly titleClaims = new Map<string, string>();
 
   constructor(private readonly clock: () => Date = () => new Date()) {}
 
@@ -234,6 +252,28 @@ export class MemoryThreadRepository implements ThreadRepository {
     if (row.title === null && message !== undefined) row.title = firstTitle(message);
   }
 
+  async startMessage(id: string, message: string): Promise<string | null> {
+    this.assertOpen();
+    const row = this.rows.get(id);
+    if (!row || row.deleting) return null;
+    row.updatedAt = this.clock().toISOString();
+    if (row.title !== null) return null;
+    row.title = firstTitle(message);
+    const claim = randomUUID();
+    this.titleClaims.set(id, claim);
+    return claim;
+  }
+
+  /** Synchronous mutation lets the memory journal commit the title and event together. */
+  completeTitle(id: string, claim: string, title: string): boolean {
+    this.assertOpen();
+    const row = this.rows.get(id);
+    if (!row || row.deleting || this.titleClaims.get(id) !== claim) return false;
+    row.title = title;
+    this.titleClaims.delete(id);
+    return true;
+  }
+
   async markDeleting(id: string): Promise<void> {
     this.assertOpen();
     const row = this.rows.get(id);
@@ -243,6 +283,7 @@ export class MemoryThreadRepository implements ThreadRepository {
   async delete(id: string): Promise<void> {
     this.assertOpen();
     this.rows.delete(id);
+    this.titleClaims.delete(id);
   }
   async close(): Promise<void> {
     this.closed = true;

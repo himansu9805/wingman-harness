@@ -25,3 +25,4 @@ docs: |-
   Replaying a delegation_plan snapshot must replace its planId state, not add tokens.
   Snapshot/task IDs remain stable across approval resumes and process reconnection.
   The stream is read-only: reconnecting never submits work or approvals again.
+  Replayed thread_title events restore the persisted generated title and do not start a new turn.
