@@ -5,10 +5,10 @@ import { Markdown } from "@astryxdesign/core/Markdown";
 import { Icon } from "@astryxdesign/core/Icon";
 import { CheckCircle2, Circle, Clock, GitBranch, OctagonAlert, Play, XCircle } from "lucide-react";
 import * as stylex from "@stylexjs/stylex";
-import type { ThreadEvent } from "../api/types";
-import type { DelegationTask, DelegationPlanSnapshot } from "../api/delegation";
-import { taskCalls, taskStatus, tokenLabel } from "../state/delegation";
-import { duration } from "../state/run-summary";
+import type { ThreadEvent } from "../../../shared/contracts/types";
+import type { DelegationTask, DelegationPlanSnapshot } from "../../../shared/contracts/delegation";
+import { taskCalls, taskStatus, tokenLabel } from "../model/delegation";
+import { duration } from "../model/run-summary";
 import { ToolCalls } from "./ToolCalls";
 
 /** A single plan rendered at its parent tool call's position in the turn. */
@@ -36,10 +36,7 @@ export function DelegatedWork({
         {plan.tasks.map((task) => (
           <Task key={task.key} task={task} events={events} />
         ))}
-        <Text type="supporting">
-          {duration(plan.elapsedMs)} elapsed at last update · Task tokens are included in the turn
-          total. Parallel task durations overlap.
-        </Text>
+        <Text type="supporting">{duration(plan.elapsedMs)} elapsed at last update.</Text>
       </VStack>
       {plan.error && (
         <Text type="supporting" role="status">
@@ -49,6 +46,7 @@ export function DelegatedWork({
     </VStack>
   );
 }
+/** Render one specialist’s status, usage, tool activity, and reported findings. */
 function Task({ task, events }: { task: DelegationTask; events: ThreadEvent[] }) {
   const calls = taskCalls(task.taskId, events).map((call) => ({
     ...call,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createApi } from "../src/api/client.ts";
+import { createApi } from "../src/features/chat/api/client.ts";
 
 test("mutations use the same-origin proxy and JSON; resume answers keep every approval ID", async () => {
   const requests = [];

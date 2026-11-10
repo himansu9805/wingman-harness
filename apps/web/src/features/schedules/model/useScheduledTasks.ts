@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createTasksApi, type ScheduledTask } from "../api/tasks";
-import { defaultConnection, ApiError } from "../api/client";
-import type { Connection } from "../api/types";
+import { defaultConnection, ApiError } from "../../../shared/api/connection";
+import type { Connection } from "../../../shared/contracts/types";
 
+/** Extract an error message or supply a user-facing fallback for unknown failures. */
 const explain = (error: unknown) => (error instanceof Error ? error.message : "Request failed.");
 type Page<T> = { items: T[]; nextCursor: string | null };
 
@@ -17,6 +18,7 @@ function usePages<T extends { id: string }>(
   const scope = useRef(new AbortController());
   const busy = useRef<AbortController | null>(null);
   const cursor = useRef<string | null>(null);
+  /** Fetch or append a page while rejecting overlapping loads and stale lifecycle responses. */
   const load = useCallback(
     async (more = false, controller = scope.current) => {
       if (controller.signal.aborted || busy.current === controller || (more && !cursor.current))
@@ -66,12 +68,16 @@ function usePages<T extends { id: string }>(
     nextCursor,
     loading,
     error,
+    /** Reload the first page. */
     refresh: () => load(),
+    /** Append the next page when a cursor is available. */
     more: () => load(true),
+    /** Remove a task from the displayed page collection. */
     remove: (id: string) => setItems((old) => old.filter((item) => item.id !== id)),
   };
 }
 
+/** Load scheduled tasks and coordinate cancellation, preserving removal across stale list responses. */
 export function useScheduledTasks(connection: Connection = defaultConnection) {
   const api = useMemo(() => createTasksApi(connection), [connection]);
   const [schedulerEnabled, setSchedulerEnabled] = useState<boolean | null>(null);
@@ -86,6 +92,7 @@ export function useScheduledTasks(connection: Connection = defaultConnection) {
     scope.current = controller;
     return () => controller.abort();
   }, []);
+  /** Load a task page and omit tasks already cancelled locally. */
   const fetchTasks = useCallback(
     async (signal: AbortSignal, cursor?: string) => {
       const page = await api.list(signal, cursor);
@@ -98,6 +105,7 @@ export function useScheduledTasks(connection: Connection = defaultConnection) {
     [api],
   );
   const tasks = usePages<ScheduledTask>(fetchTasks);
+  /** Cancel future runs once, retain the chat, and refresh after success or an uncertain failure. */
   const cancel = async (task: ScheduledTask) => {
     if (mutation.current) return false;
     const signal = scope.current.signal;
@@ -136,6 +144,7 @@ export function useScheduledTasks(connection: Connection = defaultConnection) {
     actionError,
     notice,
     cancel,
+    /** Dismiss cancellation feedback without changing the task list. */
     clearFeedback: () => {
       setActionError("");
       setNotice("");

@@ -13,9 +13,10 @@ import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
 import { AssistantTurn } from "./AssistantTurn";
-import { transcript } from "../state/transcript";
-import type { Wingman } from "../state/useWingman";
+import { transcript } from "../model/transcript";
+import type { Wingman } from "../model/useWingman";
 
+/** Render saved and live turns with a composer that preserves the current draft. */
 export function Conversation({ model }: { model: Wingman }) {
   const [draft, setDraft] = useState("");
   const previousThread = useRef(model.threadId);

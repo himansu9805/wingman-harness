@@ -1,11 +1,13 @@
-import type { RunMetadata } from "../api/run-metadata";
+import type { RunMetadata } from "../../../shared/contracts/run-metadata";
 import type { TranscriptTurn } from "./transcript";
 
+/** Return the most recent backend run snapshot attached to this visual turn. */
 export function latestRun(turn: TranscriptTurn): RunMetadata | undefined {
   const event = turn.events.findLast((event) => event.type === "run");
   return event?.type === "run" ? event.metadata : undefined;
 }
 
+/** Format milliseconds as a compact duration for processing and elapsed-time labels. */
 export function duration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`;
   const seconds = Math.round(ms / 100) / 10;
@@ -44,8 +46,10 @@ export function runSummary(run: RunMetadata): string[] {
   return parts;
 }
 
+/** Describe cumulative token usage, its availability, and the turn’s completion timestamp. */
 export function usageDetails(run: RunMetadata): string {
   const usage = run.turn.usage;
+  /** Format a token count without presenting missing usage as zero. */
   const count = (value: number | null) => (value === null ? "unavailable" : value.toLocaleString());
   return [
     `Input: ${count(usage.inputTokens)} · Output: ${count(usage.outputTokens)}`,

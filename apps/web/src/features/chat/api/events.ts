@@ -1,5 +1,5 @@
-import { ApiError } from "./client";
-import type { Connection, ThreadEvent } from "./types";
+import { ApiError } from "../../../shared/api/connection";
+import type { Connection, ThreadEvent } from "../../../shared/contracts/types";
 
 export interface EventFrame {
   id: string;
@@ -14,7 +14,9 @@ export class EventParser {
   private id = "";
   private event = "";
   private size = 0;
+  /** Create a parser that emits each complete SSE frame to the supplied callback. */
   constructor(private readonly emit: (frame: EventFrame) => void) {}
+  /** Consume decoded text, retain incomplete lines, and reject oversized events. */
   push(chunk: string) {
     this.buffer += chunk;
     if (this.buffer.length > 1_000_000) throw new Error("Event exceeded the size limit.");
@@ -57,13 +59,16 @@ interface WatchOptions {
   fetcher?: typeof fetch;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
+/** Wait before reconnecting; reject promptly when the subscription is aborted. */
 function wait(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
+    /** Release the abort listener before completing the reconnect delay. */
     const finish = () => {
       signal.removeEventListener("abort", abort);
       resolve();
     };
     const timer = setTimeout(finish, ms);
+    /** Cancel the reconnect timer and reject with the subscription’s abort reason. */
     const abort = () => {
       clearTimeout(timer);
       reject(signal.reason);

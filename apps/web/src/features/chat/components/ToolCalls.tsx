@@ -4,11 +4,12 @@ import { ChatToolCalls } from "@astryxdesign/core/Chat";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
-import { toolLabel } from "../state/transcript";
-import type { ToolCall } from "../api/types";
+import { toolLabel } from "../model/transcript";
+import type { ToolCall } from "../../../shared/contracts/types";
 import { Hammer, ToolCase } from "lucide-react";
 import { Icon } from "@astryxdesign/core";
 
+/** Render collapsible tool activity with request arguments, outcomes, and group summaries. */
 export function ToolCalls({
   calls,
   running,

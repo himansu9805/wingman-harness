@@ -4,7 +4,7 @@ import "@astryxdesign/core/reset.css";
 import "@astryxdesign/core/astryx.css";
 import { Theme } from "@astryxdesign/core/theme";
 import { themes, defaultThemeSlug } from "./astryx-themes";
-import App from "./App";
+import App from "./app/App";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

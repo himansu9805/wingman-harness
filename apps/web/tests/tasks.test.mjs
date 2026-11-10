@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { createTasksApi } from "../src/api/tasks.ts";
+import { createTasksApi } from "../src/features/schedules/api/tasks.ts";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://127.0.0.1:5173",
 });
@@ -10,7 +10,7 @@ for (const name of ["window", "document", "HTMLElement", "localStorage"])
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { renderHook, act, waitFor, cleanup } = await import("@testing-library/react");
-const { useScheduledTasks } = await import("../src/state/useScheduledTasks.ts");
+const { useScheduledTasks } = await import("../src/features/schedules/model/useScheduledTasks.ts");
 const connection = { url: "http://local.test" };
 const task = {
   id: "one",
@@ -163,7 +163,8 @@ test("a cancellation response after leaving the view cannot write stale UI state
 });
 
 test("schedule descriptions support cron and existing natural-language intervals", async () => {
-  const { scheduleDescription } = await import("../src/components/schedule-format.ts");
+  const { scheduleDescription } =
+    await import("../src/features/schedules/model/schedule-format.ts");
   assert.match(scheduleDescription("0 9 * * *"), /every day/i);
   assert.equal(scheduleDescription("1 hour"), "1 hour");
   assert.equal(scheduleDescription(null), "One-time task");

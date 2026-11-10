@@ -1,4 +1,4 @@
-import { turnContent } from "../state/turn-content";
+import { turnContent } from "../model/turn-content";
 import { DelegatedWork } from "./DelegatedWork";
 import { ChatMessage, ChatMessageBubble } from "@astryxdesign/core/Chat";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
@@ -8,14 +8,15 @@ import { Markdown } from "@astryxdesign/core/Markdown";
 import { Cpu, Clock } from "lucide-react";
 import * as stylex from "@stylexjs/stylex";
 import { RunSummary } from "./RunSummary";
-import { latestRun } from "../state/run-summary";
+import { latestRun } from "../model/run-summary";
 import { ToolCalls } from "./ToolCalls";
 import { ApprovalCard } from "./ApprovalCard";
-import { type TranscriptTurn } from "../state/transcript";
-import { toolsWithResults } from "../state/events";
-import type { Wingman } from "../state/useWingman";
+import { type TranscriptTurn } from "../model/transcript";
+import { toolsWithResults } from "../model/events";
+import type { Wingman } from "../model/useWingman";
 import { Tooltip } from "@astryxdesign/core";
 
+/** Render a turn’s ordered tool activity, delegation, response, approvals, and run metadata. */
 export function AssistantTurn({
   turn,
   model,

@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, createApi } from "../api/client";
+import { createApi } from "../api/client";
+import { ApiError } from "../../../shared/api/connection";
 import { watchEvents, type StreamStatus } from "../api/events";
-import type { Approval, Connection, History, Message, Thread } from "../api/types";
+import type {
+  Approval,
+  Connection,
+  History,
+  Message,
+  Thread,
+} from "../../../shared/contracts/types";
 import { applyEvent, emptyActivity } from "./events";
 import { saveThread, selectedThread } from "./storage";
 
+/** Extract an error message or supply a user-facing fallback for unknown failures. */
 const explain = (error: unknown) =>
   error instanceof Error ? error.message : "Something went wrong.";
+/** Manage conversation selection, optimistic messages, durable events, approvals, and catalogue refreshes. Stale requests are aborted when the connection or selected conversation changes. */
 export function useWingman(connection: Connection | null) {
   const api = useMemo(() => (connection ? createApi(connection) : null), [connection]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -38,6 +47,7 @@ export function useWingman(connection: Connection | null) {
   const createdThread = useRef<string | null>(null);
   const optimistic = useRef<{ message: Message; previousIds: Set<string> } | null>(null);
 
+  /** Select a conversation and immediately abort writes belonging to the previous selection. */
   const select = useCallback((id: string | null) => {
     if (selectedId.current === id) return;
     selectedId.current = id;
@@ -47,6 +57,7 @@ export function useWingman(connection: Connection | null) {
     setError("");
   }, []);
 
+  /** Refresh or append catalogue entries, ignoring results from an aborted connection. */
   const refreshThreads = useCallback(
     async (more = false) => {
       if (!api) return;
@@ -78,6 +89,7 @@ export function useWingman(connection: Connection | null) {
       setStream("offline");
       return () => controller.abort();
     }
+    /** Refresh the conversation catalogue unless this connection’s lifecycle has ended. */
     async function poll() {
       try {
         const page = await api!.list(controller.signal);
@@ -121,6 +133,7 @@ export function useWingman(connection: Connection | null) {
     }
     let refreshing = false;
     let again = false;
+    /** Coalesce history refreshes and reconcile saved messages with the optimistic prompt. */
     const refresh = async () => {
       if (refreshing) {
         again = true;
@@ -205,6 +218,7 @@ export function useWingman(connection: Connection | null) {
     };
   }, [api, threadId, select]);
 
+  /** Serialize mutations within a lifecycle and surface uncertain transport outcomes without retrying. */
   const perform = async (
     action: (signal: AbortSignal) => Promise<void>,
     scope = threadLifecycle.current,
@@ -246,10 +260,13 @@ export function useWingman(connection: Connection | null) {
     catalogueCursor,
     select,
     refreshThreads,
+    /** Dismiss the current request error. */
     clearError: () => setError(""),
+    /** Open a local draft without creating a server-side conversation. */
     create: () => {
       select(null);
     },
+    /** Delete a conversation, clear its title overlay, and refresh the catalogue. */
     remove: (id: string) =>
       perform(async (signal) => {
         if (!api) return;
@@ -263,6 +280,7 @@ export function useWingman(connection: Connection | null) {
         if (threadId === id) select(null);
         await refreshThreads();
       }, lifecycle.current),
+    /** Show the prompt immediately, persist a draft on first send, and reconcile acceptance with live events. */
     send: (message: string) =>
       perform(async (signal) => {
         if (!api) throw new Error("Connection unavailable.");
@@ -308,6 +326,7 @@ export function useWingman(connection: Connection | null) {
           setActivity((old) => ({ ...old, runId, phase: "running" }));
         void refreshThread.current();
       }),
+    /** Submit approval decisions without overwriting events that arrived before acceptance. */
     resume: async (answers: Record<string, boolean>) => {
       await perform(async (signal) => {
         if (!api || !threadId) return;
@@ -319,6 +338,7 @@ export function useWingman(connection: Connection | null) {
         }
       });
     },
+    /** Prepend an older history page without duplicating saved message IDs. */
     older: () =>
       perform(async (signal) => {
         if (!api || !threadId || !history.nextCursor) return;

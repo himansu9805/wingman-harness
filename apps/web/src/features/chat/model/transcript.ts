@@ -1,4 +1,4 @@
-import type { Message, ThreadEvent, ToolCall } from "../api/types";
+import type { Message, ThreadEvent, ToolCall } from "../../../shared/contracts/types";
 
 export interface TranscriptTurn {
   id: string;
@@ -114,6 +114,7 @@ export function liveCalls(turn: TranscriptTurn): ToolCall[] {
   return [...calls.values()];
 }
 
+/** Build a readable tool name and target from known arguments or the serialized payload. */
 export function toolLabel(call: ToolCall): { name: string; target: string } {
   const labels: Record<string, string> = {
     exec_bash_command: "Run command",

@@ -9,7 +9,7 @@ for (const name of ["window", "document", "HTMLElement", "localStorage"])
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { renderHook, act, waitFor, cleanup } = await import("@testing-library/react");
-const { useWingman } = await import("../src/state/useWingman.ts");
+const { useWingman } = await import("../src/features/chat/model/useWingman.ts");
 const connection = { url: "http://local.test", token: "test-only" };
 
 function apiFixture() {

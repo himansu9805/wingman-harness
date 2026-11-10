@@ -1,13 +1,14 @@
-import { delegatedPlans } from "../state/delegation";
-import type { ThreadEvent } from "../api/types";
+import { delegatedPlans } from "../model/delegation";
+import type { ThreadEvent } from "../../../shared/contracts/types";
 import { useState } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { Text } from "@astryxdesign/core/Text";
-import type { Approval } from "../api/types";
+import type { Approval } from "../../../shared/contracts/types";
 
+/** Collect independent decisions for every pending approval and submit their exact IDs. */
 export function ApprovalCard({
   approvals,
   busy,

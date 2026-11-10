@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EventParser, watchEvents } from "../src/api/events.ts";
-import { applyEvent, emptyActivity, toolsWithResults } from "../src/state/events.ts";
+import { EventParser, watchEvents } from "../src/features/chat/api/events.ts";
+import { applyEvent, emptyActivity, toolsWithResults } from "../src/features/chat/model/events.ts";
 
 function response(text) {
   return new Response(text, { headers: { "content-type": "text/event-stream" } });
