@@ -164,3 +164,55 @@ test("reused tool IDs never overwrite completed history or borrow an earlier res
   });
   assert.deepEqual(toolsWithResults([completed], events)[0].result, completed.result);
 });
+
+test("replay is explicit on each connection and interrupted catch-up resumes without losing events", async () => {
+  const controller = new AbortController();
+  const received = [];
+  const completed = [];
+  const requests = [];
+  let status;
+  const frame = (sequence, type) =>
+    `id: thread:${sequence}\nevent: ${type}\ndata: ${JSON.stringify({ type, runId: "run", text: "answer" })}\n\n`;
+  await watchEvents({
+    connection: { url: "http://local.test" },
+    threadId: "thread",
+    signal: controller.signal,
+    wait: async () => {},
+    onStatus(value) {
+      status = value;
+    },
+    onError(error) {
+      throw error;
+    },
+    onReplayComplete() {
+      completed.push(received.length);
+    },
+    onEvent(event, id, replaying) {
+      received.push({ id, replaying });
+      if (id === "thread:3") {
+        assert.equal(status, "live");
+        controller.abort();
+      } else {
+        assert.notEqual(status, "live");
+      }
+    },
+    fetcher: async (_url, options) => {
+      requests.push(options);
+      return response(
+        requests.length === 1
+          ? frame(1, "route")
+          : frame(1, "route") +
+              frame(2, "done") +
+              'event: replay_complete\ndata: {"cursor":"thread:2"}\n\n' +
+              frame(3, "route"),
+      );
+    },
+  });
+  assert.deepEqual(received, [
+    { id: "thread:1", replaying: true },
+    { id: "thread:2", replaying: true },
+    { id: "thread:3", replaying: false },
+  ]);
+  assert.deepEqual(completed, [2]);
+  assert.equal(requests[1].headers["Last-Event-ID"], "thread:1");
+});

@@ -53,7 +53,10 @@ interface WatchOptions {
   connection: Connection;
   threadId: string;
   signal: AbortSignal;
-  onEvent: (event: ThreadEvent, id: string) => void;
+  /** Historical events are flagged until the server confirms its captured journal cursor. */
+  onEvent: (event: ThreadEvent, id: string, replaying: boolean) => void;
+  /** Publish accumulated replay state before live events are delivered. */
+  onReplayComplete?: () => void;
   onStatus: (status: StreamStatus) => void;
   onError: (error: Error) => void;
   fetcher?: typeof fetch;
@@ -100,10 +103,19 @@ export async function watchEvents(options: WatchOptions): Promise<void> {
       if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body)
         throw new Error("Server did not return an event stream.");
       reader = response.body.getReader();
-      onStatus("live");
+      let replaying = true;
       retry = 1_000;
       const decoder = new TextDecoder();
       const parser = new EventParser((frame) => {
+        if (frame.event === "replay_complete") {
+          const boundary = JSON.parse(frame.data) as { cursor?: unknown };
+          if (!replaying || boundary.cursor !== (cursor || `${threadId}:0`))
+            throw new Error("Invalid replay boundary.");
+          replaying = false;
+          options.onReplayComplete?.();
+          onStatus("live");
+          return;
+        }
         if (!frame.id.startsWith(`${threadId}:`))
           throw new Error("Event belongs to another thread.");
         const sequence = frame.id.slice(threadId.length + 1);
@@ -112,7 +124,7 @@ export async function watchEvents(options: WatchOptions): Promise<void> {
         const payload = JSON.parse(frame.data) as ThreadEvent;
         if (payload.type !== frame.event || typeof payload.runId !== "string")
           throw new Error("Invalid event payload.");
-        onEvent(payload, frame.id);
+        onEvent(payload, frame.id, replaying);
         cursor = frame.id;
       });
       while (!signal.aborted) {

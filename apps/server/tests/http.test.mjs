@@ -1618,3 +1618,59 @@ test(
     assert.equal((await api.store.get("fresh")).title, "Inspect Docker containers");
   },
 );
+
+test(
+  "replay boundary separates a paged journal from concurrent live appends",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const api = await server(t);
+    const runId = "00000000-0000-4000-8000-000000000001";
+    for (let i = 0; i < 205; i++)
+      await api.journal.append("fresh", runId, { type: "done", text: String(i) });
+    const listAfter = api.journal.listAfter.bind(api.journal);
+    let appended = false;
+    api.journal.listAfter = async (...args) => {
+      if (!appended) {
+        appended = true;
+        await api.journal.append("fresh", runId, { type: "done", text: "live" });
+      }
+      return listAfter(...args);
+    };
+    const response = await api.request("fresh/events");
+    const reader = response.body.getReader();
+    let text = "";
+    try {
+      while (!text.includes('"text":"live"')) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false);
+        text += new TextDecoder().decode(chunk.value);
+      }
+      const frames = events(text);
+      const boundary = frames.findIndex((frame) => frame.type === "replay_complete");
+      assert.equal(boundary, 205);
+      assert.deepEqual(frames[boundary].data, { cursor: "fresh:205" });
+      assert.equal(frames[boundary + 1].data.text, "live");
+      assert.equal(frames.filter((frame) => frame.type === "replay_complete").length, 1);
+    } finally {
+      await reader.cancel();
+    }
+  },
+);
+
+test(
+  "an empty journal completes replay before waiting for live events",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const api = await server(t);
+    const response = await api.request("fresh/events");
+    const reader = response.body.getReader();
+    try {
+      const chunk = await reader.read();
+      assert.deepEqual(events(new TextDecoder().decode(chunk.value)), [
+        { type: "replay_complete", data: { cursor: "fresh:0" } },
+      ]);
+    } finally {
+      await reader.cancel();
+    }
+  },
+);

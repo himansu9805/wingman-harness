@@ -179,6 +179,11 @@ export function useWingman(connection: Connection | null) {
     refreshThread.current = refresh;
     void refresh();
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    // Keep replay reduction bounded by applyEvent, but publish only after the journal boundary.
+    // Preserve first-send state during the draft-to-persisted-thread handoff.
+    let restoredActivity = handoff ? activity : emptyActivity;
+    let restoredPending: Approval[] | undefined;
+    let restoredError: string | undefined;
     void watchEvents({
       connection: api.connection,
       threadId,
@@ -192,7 +197,14 @@ export function useWingman(connection: Connection | null) {
           setError(explain(e));
         }
       },
-      onEvent: (event) => {
+      onReplayComplete: () => {
+        if (signal.aborted) return;
+        setActivity(restoredActivity);
+        if (restoredPending !== undefined) setPending(restoredPending);
+        if (restoredError !== undefined) setError(restoredError);
+        void refresh();
+      },
+      onEvent: (event, _id, replaying) => {
         if (signal.aborted) return;
         if (event.type === "thread_title") {
           setTitles((old) => new Map(old).set(threadId, event.title));
@@ -201,7 +213,13 @@ export function useWingman(connection: Connection | null) {
         seenRuns.current.add(event.runId);
         if (seenRuns.current.size > 500)
           seenRuns.current.delete(seenRuns.current.values().next().value!);
-        setActivity((old) => applyEvent(old, event));
+        restoredActivity = applyEvent(restoredActivity, event);
+        if (event.type === "approval") restoredPending = event.approvals;
+        if (event.type === "done" || event.type === "error") restoredPending = [];
+        if (event.type === "done") restoredError = "";
+        if (event.type === "error") restoredError = event.message;
+        if (replaying) return;
+        setActivity(restoredActivity);
         if (event.type === "approval") setPending(event.approvals);
         if (event.type === "done" || event.type === "error") setPending([]);
         if (event.type === "done") setError("");
