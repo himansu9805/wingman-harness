@@ -52,7 +52,10 @@ export class ThreadsController {
     await this.agent.delete(parse(ThreadId, threadId));
   }
 
-  /** Replays the journal and polls for new rows without a replay/live handoff gap. */
+  /**
+   * Replay through the cursor captured at subscription, emit replay_complete, then deliver live rows.
+   * The control frame has no durable ID and does not advance the consumer’s journal cursor.
+   */
   @Get(":threadId/events")
   async events(
     @Param("threadId") rawId: string,
@@ -75,6 +78,8 @@ export class ThreadsController {
       if (BigInt(cursor) > BigInt(await this.agent.events.latest(threadId)))
         throw new BadRequestException("Event cursor is ahead of this thread");
     }
+    const replayThrough = await this.agent.events.latest(threadId);
+    let replaying = true;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, this.agent.shutdownSignal]);
     const disconnect = () => controller.abort();
@@ -88,6 +93,16 @@ export class ThreadsController {
     });
     res.flushHeaders();
     let heartbeatAt = Date.now();
+    /** Mark the captured journal boundary before delivering any newer live events. */
+    const completeReplay = async () => {
+      if (!replaying) return;
+      await writeSse(
+        res,
+        `event: replay_complete\ndata: ${JSON.stringify({ cursor: `${threadId}:${replayThrough}` })}\n\n`,
+        signal,
+      );
+      replaying = false;
+    };
     try {
       while (!signal.aborted) {
         try {
@@ -95,11 +110,14 @@ export class ThreadsController {
         } catch {
           break;
         }
+        if (BigInt(cursor) >= BigInt(replayThrough)) await completeReplay();
         const rows = await this.agent.events.listAfter(threadId, cursor, 100);
         for (const row of rows) {
+          if (BigInt(row.sequence) > BigInt(replayThrough)) await completeReplay();
           await writeSse(res, eventFrame(row), signal);
           cursor = row.sequence;
         }
+        if (BigInt(cursor) >= BigInt(replayThrough)) await completeReplay();
         if (rows.length === 100) continue;
         if (Date.now() - heartbeatAt >= 15_000) {
           await writeSse(res, ": heartbeat\n\n", signal);
