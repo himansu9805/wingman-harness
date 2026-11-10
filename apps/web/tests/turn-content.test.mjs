@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { turnContent } from "../src/state/turn-content.ts";
-import { applyEvent, emptyActivity } from "../src/state/events.ts";
-import { AssistantTurn } from "../src/components/AssistantTurn.tsx";
+import { turnContent } from "../src/features/chat/model/turn-content.ts";
+import { applyEvent, emptyActivity } from "../src/features/chat/model/events.ts";
+import { AssistantTurn } from "../src/features/chat/components/AssistantTurn.tsx";
 
 const memory = { id: "memory", name: "recall_memory", args: { name: "User" } };
 const delegate = { id: "delegate", name: "delegate_task", args: {} };

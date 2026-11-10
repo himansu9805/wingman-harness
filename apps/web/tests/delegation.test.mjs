@@ -30,11 +30,11 @@ dom.window.matchMedia = (query) => ({
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { render, fireEvent, cleanup } = await import("@testing-library/react");
 const { createElement } = await import("react");
-const { DelegatedWork } = await import("../src/components/DelegatedWork.tsx");
-const { ApprovalCard } = await import("../src/components/ApprovalCard.tsx");
-const { delegatedPlans, taskCalls } = await import("../src/state/delegation.ts");
-const { applyEvent, emptyActivity } = await import("../src/state/events.ts");
-const { transcript } = await import("../src/state/transcript.ts");
+const { DelegatedWork } = await import("../src/features/chat/components/DelegatedWork.tsx");
+const { ApprovalCard } = await import("../src/features/chat/components/ApprovalCard.tsx");
+const { delegatedPlans, taskCalls } = await import("../src/features/chat/model/delegation.ts");
+const { applyEvent, emptyActivity } = await import("../src/features/chat/model/events.ts");
+const { transcript } = await import("../src/features/chat/model/transcript.ts");
 const usage = {
   scope: "agent",
   modelCalls: 1,
@@ -137,11 +137,11 @@ test("old-plan cleanup belongs to its original prompt even when journaled in the
   assert.equal(turns[0].events[0].type, "delegation_plan");
   assert.equal(turns[1].events[0].type, "done");
 });
-test("delegated tasks expand with native buttons, preserve sibling identity and expose included token totals", (t) => {
+test("delegated tasks expand with native buttons, preserve sibling identity and expose task token totals", (t) => {
   t.after(cleanup);
   const view = render(createElement(DelegatedWork, { plan, events: [plan] }));
   assert.match(view.container.textContent, /2 of 2 completed/);
-  assert.match(view.container.textContent, /included in the turn total/);
+  assert.match(view.container.textContent, /1 s elapsed at last update\./);
   const trigger = view.getByRole("button", { name: /research.*analyst.*Completed/ });
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
   fireEvent.click(trigger);

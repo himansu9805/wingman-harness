@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+/** Validate the backend destination and read its private authentication token from the environment. */
 export function backendConfig(env: Record<string, string | undefined>) {
   const url = new URL(env.WINGMAN_API_URL || `http://127.0.0.1:${env.PORT || "3000"}`);
   if (
@@ -24,6 +25,7 @@ export function apiGuard(config: ReturnType<typeof backendConfig>) {
       next();
       return;
     }
+    /** Return a non-cacheable JSON error from the private API guard. */
     const fail = (status: number, message: string) => {
       response.writeHead(status, {
         "Content-Type": "application/json",

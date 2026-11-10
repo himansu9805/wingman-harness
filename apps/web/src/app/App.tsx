@@ -9,13 +9,14 @@ import { Banner } from "@astryxdesign/core/Banner";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import * as stylex from "@stylexjs/stylex";
 import { ThreadSidebar } from "./components/ThreadSidebar";
-import { ScheduledView } from "./components/ScheduledView";
-import { Conversation } from "./components/Conversation";
-import { useWingman } from "./state/useWingman";
-import { removeLegacyConnection } from "./state/storage";
-import { defaultConnection } from "./api/client";
-import type { Thread } from "./api/types";
+import { ScheduledView } from "../features/schedules/components/ScheduledView";
+import { Conversation } from "../features/chat/components/Conversation";
+import { useWingman } from "../features/chat/model/useWingman";
+import { removeLegacyConnection } from "../features/chat/model/storage";
+import { defaultConnection } from "../shared/api/connection";
+import type { Thread } from "../shared/contracts/types";
 
+/** Compose chat and scheduling views, conversation navigation, and deletion confirmation. */
 export default function App() {
   const [view, setView] = useState<"chat" | "scheduled">(() =>
     window.location.hash === "#scheduled" ? "scheduled" : "chat",

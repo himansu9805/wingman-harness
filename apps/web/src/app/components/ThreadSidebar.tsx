@@ -6,10 +6,11 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { MessageSquare, Trash2, RotateCcw, SquarePen, Clock } from "lucide-react";
 import * as stylex from "@stylexjs/stylex";
-import wingmanLogo from "../../../../assets/branding/wingman-logo.png";
-import type { Wingman } from "../state/useWingman";
-import type { Thread } from "../api/types";
+import wingmanLogo from "../../../../../assets/branding/wingman-logo.png";
+import type { Wingman } from "../../features/chat/model/useWingman";
+import type { Thread } from "../../shared/contracts/types";
 
+/** Render conversation navigation, scheduled-task indicators, and conversation actions. */
 export function ThreadSidebar({
   model,
   onDelete,

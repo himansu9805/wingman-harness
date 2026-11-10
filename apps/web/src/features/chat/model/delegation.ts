@@ -1,11 +1,13 @@
-import type { ThreadEvent, ToolCall } from "../api/types";
-import type { DelegationPlanSnapshot, DelegationTask } from "../api/delegation";
+import type { ThreadEvent, ToolCall } from "../../../shared/contracts/types";
+import type { DelegationPlanSnapshot, DelegationTask } from "../../../shared/contracts/delegation";
 
+/** Keep the latest snapshot of each plan while preserving its first-seen order. */
 export function delegatedPlans(events: ThreadEvent[]): DelegationPlanSnapshot[] {
   const plans = new Map<string, DelegationPlanSnapshot>();
   for (const event of events) if (event.type === "delegation_plan") plans.set(event.planId, event);
   return [...plans.values()];
 }
+/** Translate backend plan and specialist statuses into readable UI labels. */
 export function taskStatus(
   status: DelegationTask["status"] | DelegationPlanSnapshot["status"],
 ): string {
@@ -23,6 +25,7 @@ export function taskStatus(
     cancelling: "Cancelling",
   }[status];
 }
+/** Format specialist usage while distinguishing missing, partial, and complete totals. */
 export function tokenLabel(usage: DelegationTask["usage"]): string {
   if (!usage.modelCalls) return "No model calls";
   if (usage.availability === "unavailable") return "Token usage unavailable";

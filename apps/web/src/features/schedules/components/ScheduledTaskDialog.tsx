@@ -7,8 +7,9 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { MessageSquare, Trash2, X } from "lucide-react";
 import * as stylex from "@stylexjs/stylex";
 import type { ScheduledTask } from "../api/tasks";
-import { scheduleDescription, taskTime } from "./schedule-format";
+import { scheduleDescription, taskTime } from "../model/schedule-format";
 
+/** Show a selected task’s schedule and prompt with cancellation and chat navigation. */
 export function ScheduledTaskDialog({
   task,
   busy,

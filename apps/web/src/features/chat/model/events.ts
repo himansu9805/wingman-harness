@@ -1,4 +1,4 @@
-import type { ThreadEvent, ToolCall } from "../api/types";
+import type { ThreadEvent, ToolCall } from "../../../shared/contracts/types";
 
 export type RunPhase = "idle" | "running" | "paused" | "done" | "error";
 export interface Activity {
@@ -8,6 +8,7 @@ export interface Activity {
 }
 export const emptyActivity: Activity = { phase: "idle", events: [] };
 
+/** Update live activity from an event, replacing snapshots and excluding title-only notifications. */
 export function applyEvent(state: Activity, event: ThreadEvent): Activity {
   if (event.type === "thread_title") return state;
   const phase: RunPhase =

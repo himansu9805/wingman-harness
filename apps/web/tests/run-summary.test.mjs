@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { runSummary, usageDetails, duration } from "../src/state/run-summary.ts";
-import { applyEvent, emptyActivity } from "../src/state/events.ts";
-import { transcript } from "../src/state/transcript.ts";
-import { RunSummary } from "../src/components/RunSummary.tsx";
+import { runSummary, usageDetails, duration } from "../src/features/chat/model/run-summary.ts";
+import { applyEvent, emptyActivity } from "../src/features/chat/model/events.ts";
+import { transcript } from "../src/features/chat/model/transcript.ts";
+import { RunSummary } from "../src/features/chat/components/RunSummary.tsx";
 
 const usage = {
   scope: "agent",

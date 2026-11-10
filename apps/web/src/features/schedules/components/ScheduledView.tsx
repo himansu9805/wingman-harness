@@ -9,11 +9,12 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import * as stylex from "@stylexjs/stylex";
 import { ChevronRight, Clock, RefreshCw, Repeat2, Plus } from "lucide-react";
-import { useScheduledTasks } from "../state/useScheduledTasks";
+import { useScheduledTasks } from "../model/useScheduledTasks";
 import type { ScheduledTask } from "../api/tasks";
-import { taskTime, scheduleDescription } from "./schedule-format";
+import { taskTime, scheduleDescription } from "../model/schedule-format";
 import { ScheduledTaskDialog } from "./ScheduledTaskDialog";
 
+/** Describe the task’s next run or its current non-scheduled state. */
 function nextRunLabel(task: ScheduledTask): string {
   if (task.state === "running") return "Running now";
   if (task.state === "paused") return "Paused";
@@ -22,6 +23,7 @@ function nextRunLabel(task: ScheduledTask): string {
   return taskTime(task.nextRunAt);
 }
 
+/** Display scheduled tasks with loading, cancellation, and conversation-navigation controls. */
 export function ScheduledView({
   openConversation,
   onCreateTask,

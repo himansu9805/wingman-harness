@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { transcript, liveCalls, toolLabel } from "../src/state/transcript.ts";
-import { AssistantTurn } from "../src/components/AssistantTurn.tsx";
+import { transcript, liveCalls, toolLabel } from "../src/features/chat/model/transcript.ts";
+import { AssistantTurn } from "../src/features/chat/components/AssistantTurn.tsx";
 import { createElement } from "react";
 
 const prompt = (id, text) => ({ id, text, role: "user" });
@@ -122,7 +122,7 @@ test("assistant markup aligns model, tools and reply inside one ghost bubble", (
 });
 
 test("collapsed multi-tool groups summarize every call instead of the final command", async () => {
-  const { ToolCalls } = await import("../src/components/ToolCalls.tsx");
+  const { ToolCalls } = await import("../src/features/chat/components/ToolCalls.tsx");
   const calls = [
     {
       id: "one",

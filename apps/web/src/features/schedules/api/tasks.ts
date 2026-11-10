@@ -1,5 +1,5 @@
-import { ApiError, defaultConnection } from "./client";
-import type { Connection } from "./types";
+import { ApiError, defaultConnection } from "../../../shared/api/connection";
+import type { Connection } from "../../../shared/contracts/types";
 
 export interface ScheduledTask {
   id: string;
@@ -15,10 +15,12 @@ export interface TaskPage {
   nextCursor: string | null;
 }
 
+/** Create a scheduled-task client for cursor-based listing and cancellation without retries. */
 export function createTasksApi(
   connection: Connection = defaultConnection,
   fetcher: typeof fetch = fetch,
 ) {
+  /** Send a scoped API request, decode JSON or an empty response, and expose HTTP failures as ApiError. */
   async function request<T>(path: string, signal: AbortSignal, method = "GET"): Promise<T> {
     const response = await fetcher(`${connection.url}/tasks${path}`, {
       method,
@@ -35,11 +37,13 @@ export function createTasksApi(
     return response.status === 204 ? (undefined as T) : response.json();
   }
   return {
+    /** Fetch a page of tasks and the scheduler availability flag. */
     list: (signal: AbortSignal, cursor?: string) =>
       request<TaskPage>(
         `?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         signal,
       ),
+    /** Cancel the identified scheduled task’s future runs. */
     cancel: (id: string, signal: AbortSignal) =>
       request<void>(`/${encodeURIComponent(id)}`, signal, "DELETE"),
   };

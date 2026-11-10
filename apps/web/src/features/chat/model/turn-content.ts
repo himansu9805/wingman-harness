@@ -1,5 +1,5 @@
-import type { ToolCall } from "../api/types";
-import type { DelegationPlanSnapshot } from "../api/delegation";
+import type { ToolCall } from "../../../shared/contracts/types";
+import type { DelegationPlanSnapshot } from "../../../shared/contracts/delegation";
 import { delegatedPlans } from "./delegation";
 import { liveCalls, type TranscriptTurn } from "./transcript";
 
