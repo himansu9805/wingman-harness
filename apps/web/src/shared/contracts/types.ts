@@ -35,11 +35,14 @@ export interface History {
   messages: Message[];
   nextCursor: string | null;
 }
+export interface HistorySnapshot extends History {
+  activity: { cursor: string; events: ThreadEvent[] };
+}
 export interface Catalogue {
   threads: Thread[];
   nextCursor: string | null;
 }
-export type ThreadEvent = { runId: string; createdAt?: string } & (
+export type ThreadEvent = { runId: string; createdAt?: string; sequence?: string } & (
   | { type: "thread_title"; title: string }
   | DelegationPlanSnapshot
   | {

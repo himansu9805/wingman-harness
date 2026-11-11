@@ -4,12 +4,13 @@ import { ApiError } from "../../../shared/api/connection";
 import { watchEvents, type StreamStatus } from "../api/events";
 import type {
   Approval,
+  ThreadEvent,
   Connection,
   History,
   Message,
   Thread,
 } from "../../../shared/contracts/types";
-import { applyEvent, emptyActivity } from "./events";
+import { applyEvent, emptyActivity, prependActivity } from "./events";
 import { saveThread, selectedThread } from "./storage";
 
 /** Extract an error message or supply a user-facing fallback for unknown failures. */
@@ -131,6 +132,46 @@ export function useWingman(connection: Connection | null) {
       refreshThread.current = async () => {};
       return () => controller.abort();
     }
+    let restoredActivity = handoff ? activity : emptyActivity;
+    let restoredPending: Approval[] | undefined;
+    let restoredError: string | undefined;
+    /** Reconcile a saved page with the optimistic prompt. */
+    const publishHistory = ({ messages, nextCursor }: History, preserveOlder = false) => {
+      const local = optimistic.current;
+      if (
+        local &&
+        messages.some(
+          (message) =>
+            message.role === "user" &&
+            message.text === local.message.text &&
+            !local.previousIds.has(message.id),
+        )
+      )
+        optimistic.current = null;
+      const optimisticMessage = optimistic.current?.message;
+      setHistory((old) => {
+        const overlap =
+          preserveOlder && messages.length
+            ? old.messages.findIndex((message) => message.id === messages[0].id)
+            : -1;
+        const earlier = overlap > 0 ? old.messages.slice(0, overlap) : [];
+        return {
+          messages: [...earlier, ...messages, ...(optimisticMessage ? [optimisticMessage] : [])],
+          nextCursor: overlap >= 0 ? old.nextCursor : nextCursor,
+        };
+      });
+    };
+    const publishSignals = () => {
+      if (restoredPending !== undefined) setPending(restoredPending);
+      if (restoredError !== undefined) setError(restoredError);
+      restoredPending = undefined;
+      restoredError = undefined;
+    };
+    const reportError = (error: unknown) => {
+      if (signal.aborted) return;
+      if (error instanceof ApiError && error.status === 404) select(null);
+      setError(explain(error));
+    };
     let refreshing = false;
     let again = false;
     /** Coalesce history refreshes and reconcile saved messages with the optimistic prompt. */
@@ -148,88 +189,85 @@ export function useWingman(connection: Connection | null) {
             api.pending(threadId, signal),
           ]);
           if (signal.aborted) return;
-          const local = optimistic.current;
-          if (
-            local &&
-            messages.messages.some(
-              (message) =>
-                message.role === "user" &&
-                message.text === local.message.text &&
-                !local.previousIds.has(message.id),
-            )
-          )
-            optimistic.current = null;
-          setHistory(
-            optimistic.current
-              ? { ...messages, messages: [...messages.messages, optimistic.current.message] }
-              : messages,
-          );
+          publishHistory(messages, true);
           setPending(approvals);
         } while (again && !signal.aborted);
-      } catch (e) {
-        if (!signal.aborted) {
-          if (e instanceof ApiError && e.status === 404) select(null);
-          setError(explain(e));
-        }
+      } catch (error) {
+        reportError(error);
       } finally {
         refreshing = false;
-        if (!signal.aborted) setLoading(false);
       }
     };
-    refreshThread.current = refresh;
-    void refresh();
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    // Keep replay reduction bounded by applyEvent, but publish only after the journal boundary.
-    // Preserve first-send state during the draft-to-persisted-thread handoff.
-    let restoredActivity = handoff ? activity : emptyActivity;
-    let restoredPending: Approval[] | undefined;
-    let restoredError: string | undefined;
-    void watchEvents({
-      connection: api.connection,
-      threadId,
-      signal,
-      onStatus: (status) => {
-        if (!signal.aborted) setStream(status);
-      },
-      onError: (e) => {
-        if (!signal.aborted) {
-          if (e instanceof ApiError && e.status === 404) select(null);
-          setError(explain(e));
-        }
-      },
-      onReplayComplete: () => {
+    /** Open a page from its snapshot, then subscribe strictly after its watermark. */
+    const open = async () => {
+      setStream("connecting");
+      try {
+        const [snapshot, approvals] = await Promise.all([
+          api.snapshot(threadId, signal),
+          api.pending(threadId, signal),
+        ]);
         if (signal.aborted) return;
+        for (const event of snapshot.activity.events) restoreEvent(event);
+        publishHistory(snapshot);
+        restoredPending = approvals;
         setActivity(restoredActivity);
-        if (restoredPending !== undefined) setPending(restoredPending);
-        if (restoredError !== undefined) setError(restoredError);
-        void refresh();
-      },
-      onEvent: (event, _id, replaying) => {
+        publishSignals();
+        refreshThread.current = refresh;
+        setLoading(false);
+        void subscribe(snapshot.activity.cursor);
+      } catch (error) {
         if (signal.aborted) return;
-        if (event.type === "thread_title") {
-          setTitles((old) => new Map(old).set(threadId, event.title));
-          return;
-        }
-        seenRuns.current.add(event.runId);
-        if (seenRuns.current.size > 500)
-          seenRuns.current.delete(seenRuns.current.values().next().value!);
-        restoredActivity = applyEvent(restoredActivity, event);
-        if (event.type === "approval") restoredPending = event.approvals;
-        if (event.type === "done" || event.type === "error") restoredPending = [];
-        if (event.type === "done") restoredError = "";
-        if (event.type === "error") restoredError = event.message;
-        if (replaying) return;
-        setActivity(restoredActivity);
-        if (event.type === "approval") setPending(event.approvals);
-        if (event.type === "done" || event.type === "error") setPending([]);
-        if (event.type === "done") setError("");
-        if (["done", "approval", "error", "tool_result"].includes(event.type)) {
-          clearTimeout(refreshTimer);
-          refreshTimer = setTimeout(() => void refresh(), 75);
-        }
-        if (event.type === "error") setError(event.message);
-      },
-    });
+        setStream("offline");
+        setLoading(false);
+        reportError(error);
+      }
+    };
+    const subscribe = (cursor: string) =>
+      watchEvents({
+        connection: api.connection,
+        threadId,
+        signal,
+        cursor,
+        onStatus: (status) => {
+          if (!signal.aborted) setStream(status);
+        },
+        onError: reportError,
+        onReplayComplete: () => {
+          if (signal.aborted) return;
+          setActivity((old) => prependActivity(restoredActivity, old.events));
+          publishSignals();
+          void refresh();
+        },
+        onEvent: (event, _id, replaying) => {
+          if (signal.aborted) return;
+          restoreEvent(event);
+          if (replaying || event.type === "thread_title") return;
+          setActivity((old) => applyEvent(old, event));
+          publishSignals();
+          if (["done", "approval", "error", "tool_result"].includes(event.type)) {
+            clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(() => void refresh(), 75);
+          }
+        },
+      });
+    /** Update journal state in sequence without exposing intermediate reconnect events. */
+    const restoreEvent = (event: ThreadEvent) => {
+      if (event.type === "thread_title") {
+        setTitles((old) => new Map(old).set(threadId, event.title));
+        return;
+      }
+      seenRuns.current.add(event.runId);
+      if (seenRuns.current.size > 500)
+        seenRuns.current.delete(seenRuns.current.values().next().value!);
+      restoredActivity = applyEvent(restoredActivity, event);
+      if (event.type === "approval") restoredPending = event.approvals;
+      if (event.type === "done" || event.type === "error") restoredPending = [];
+      if (event.type === "done") restoredError = "";
+      if (event.type === "error") restoredError = event.message;
+    };
+    refreshThread.current = async () => {};
+    void open();
     return () => {
       controller.abort();
       clearTimeout(refreshTimer);
@@ -360,14 +398,16 @@ export function useWingman(connection: Connection | null) {
     older: () =>
       perform(async (signal) => {
         if (!api || !threadId || !history.nextCursor) return;
-        const page = await api.history(threadId, signal, history.nextCursor);
-        if (!signal.aborted)
+        const page = await api.snapshot(threadId, signal, history.nextCursor);
+        if (!signal.aborted) {
+          setActivity((old) => prependActivity(old, page.activity.events));
           setHistory((old) => ({
             messages: [
               ...new Map([...page.messages, ...old.messages].map((m) => [m.id, m])).values(),
             ],
             nextCursor: page.nextCursor,
           }));
+        }
       }),
   };
 }

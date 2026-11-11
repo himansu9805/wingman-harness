@@ -9,6 +9,8 @@ for (const name of ["window", "document", "HTMLElement", "localStorage"])
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { renderHook, act, waitFor, cleanup } = await import("@testing-library/react");
+const { transcript } = await import("../src/features/chat/model/transcript.ts");
+const { turnContent } = await import("../src/features/chat/model/turn-content.ts");
 const { useWingman } = await import("../src/features/chat/model/useWingman.ts");
 const connection = { url: "http://local.test", token: "test-only" };
 
@@ -16,6 +18,8 @@ function apiFixture({ completeReplay = true } = {}) {
   const controllers = new Map();
   const pending = new Map();
   const history = new Map();
+  const snapshots = new Map();
+  const sequences = new Map();
   const calls = [];
   let postGate;
   globalThis.fetch = async (raw, options = {}) => {
@@ -23,7 +27,12 @@ function apiFixture({ completeReplay = true } = {}) {
     const parts = url.pathname.split("/");
     const id = parts[2];
     const endpoint = parts[3];
-    calls.push({ endpoint, method: options.method, body: options.body });
+    calls.push({
+      endpoint,
+      method: options.method,
+      body: options.body,
+      eventCursor: options.headers?.["Last-Event-ID"],
+    });
     if (options.method === "POST" && !id) return Response.json({ id: "created" }, { status: 201 });
     if (options.method === "POST")
       return postGate ? postGate() : Response.json({ runId: "accepted" }, { status: 202 });
@@ -34,7 +43,7 @@ function apiFixture({ completeReplay = true } = {}) {
           if (completeReplay)
             controller.enqueue(
               new TextEncoder().encode(
-                `event: replay_complete\ndata: ${JSON.stringify({ cursor: `${id}:0` })}\n\n`,
+                `event: replay_complete\ndata: ${JSON.stringify({ cursor: options.headers["Last-Event-ID"] })}\n\n`,
               ),
             );
           options.signal.addEventListener(
@@ -49,8 +58,17 @@ function apiFixture({ completeReplay = true } = {}) {
       return new Response(body, { headers: { "content-type": "text/event-stream" } });
     }
     if (endpoint === "pending") return Response.json(pending.get(id) ?? []);
-    if (endpoint === "messages")
-      return Response.json(history.get(id) ?? { messages: [], nextCursor: null });
+    if (endpoint === "messages") {
+      const cursor = url.searchParams.get("cursor");
+      const key = cursor ?? id;
+      const page = history.get(key) ?? { messages: [], nextCursor: null };
+      if (url.searchParams.has("activity")) {
+        const snapshot = snapshots.get(key) ?? { cursor: `${id}:0`, events: [] };
+        if (!cursor) sequences.set(id, Number(snapshot.cursor.split(":").at(-1)));
+        return Response.json({ ...page, activity: snapshot });
+      }
+      return Response.json(page);
+    }
     return Response.json({
       threads: [
         { id: "one", title: "One", hasScheduledTasks: true },
@@ -65,10 +83,10 @@ function apiFixture({ completeReplay = true } = {}) {
       nextCursor: null,
     });
   };
-  const sequences = new Map();
   return {
     pending,
     history,
+    snapshots,
     calls,
     setPost: (fn) => {
       postGate = fn;
@@ -472,7 +490,7 @@ test("title notifications preserve pending approval and never become chat activi
   assert(!hook.result.current.activity.events.some((event) => event.type === "thread_title"));
 });
 
-test("historical running events stay unpublished until replay reaches its captured boundary", async (t) => {
+test("saved delegation renders from the snapshot before subscribing at its watermark", async (t) => {
   const original = globalThis.fetch;
   t.after(() => {
     cleanup();
@@ -483,45 +501,115 @@ test("historical running events stay unpublished until replay reaches its captur
   fixture.history.set("one", {
     messages: [
       { id: "prompt", role: "user", text: "Run the task" },
+      {
+        id: "call",
+        role: "assistant",
+        text: "",
+        toolCalls: [{ id: "delegate", name: "delegate_task", args: {} }],
+      },
       { id: "answer", role: "assistant", text: "Already finished" },
     ],
     nextCursor: null,
   });
-  const hook = renderHook(() => useWingman(connection));
-  await waitFor(() => assert.equal(hook.result.current.history.messages.length, 2));
-  await act(async () => {
-    fixture.emit("one", { type: "route", runId: "old", choice: "powerful" });
+  fixture.snapshots.set("one", {
+    cursor: "one:900",
+    events: [
+      {
+        type: "delegation_plan",
+        runId: "old",
+        sequence: "898",
+        planId: "plan",
+        parentToolCallId: "delegate",
+        parentExecutionId: "prompt",
+        status: "completed",
+        tasks: [],
+      },
+      { type: "done", runId: "old", sequence: "900", text: "Already finished" },
+    ],
   });
-  assert.equal(hook.result.current.activity.phase, "idle");
-  assert.equal(hook.result.current.activity.events.length, 0);
-  assert.notEqual(hook.result.current.stream, "live");
-  await act(async () => {
-    fixture.emit("one", { type: "done", runId: "old", text: "Already finished" });
+  const renders = [];
+  const hook = renderHook(() => {
+    const model = useWingman(connection);
+    const turn = transcript(model.history.messages, model.activity.events)[0];
+    if (turn?.messages.length) renders.push(turnContent(turn).map((item) => item.type));
+    return model;
   });
-  assert.equal(hook.result.current.activity.events.length, 0);
-  await act(async () => fixture.completeReplay("one"));
-  await waitFor(() => assert.equal(hook.result.current.stream, "live"));
+  await waitFor(() => assert(fixture.calls.some((call) => call.endpoint === "events")));
+  assert.equal(fixture.calls.find((call) => call.endpoint === "events").eventCursor, "one:900");
+  assert.deepEqual(renders[0], ["delegation", "text"]);
   assert.equal(hook.result.current.activity.phase, "done");
-  assert.equal(hook.result.current.activity.events.length, 2);
-  // A new execution after the boundary must still become running immediately.
-  await act(async () => fixture.emit("one", { type: "route", runId: "new", choice: "fast" }));
+
+  // A run arriving between the snapshot and subscription is caught up before going live.
+  await act(async () => {
+    fixture.emit("one", { type: "route", runId: "new", choice: "fast" });
+  });
+  assert.equal(hook.result.current.activity.phase, "done");
+  await act(async () => fixture.completeReplay("one"));
+  assert.equal(hook.result.current.stream, "live");
   assert.equal(hook.result.current.activity.phase, "running");
+  assert(renders.every((content) => !content.includes("tools")));
 });
 
-test("an execution still active at the replay boundary is restored as running", async (t) => {
+test("loading older activity preserves the current run and its older delegation card survives refresh", async (t) => {
   const original = globalThis.fetch;
   t.after(() => {
     cleanup();
     globalThis.fetch = original;
   });
   localStorage.setItem("wingman.thread", "one");
-  const fixture = apiFixture({ completeReplay: false });
-  const hook = renderHook(() => useWingman(connection));
-  await waitFor(() => assert.equal(hook.result.current.loading, false));
-  await act(async () => {
-    fixture.emit("one", { type: "route", runId: "active", choice: "fast" });
-    fixture.completeReplay("one");
+  const fixture = apiFixture();
+  fixture.history.set("one", {
+    messages: [{ id: "new-prompt", role: "user", text: "Current task" }],
+    nextCursor: "older-page",
   });
+  fixture.snapshots.set("one", {
+    cursor: "one:100",
+    events: [{ type: "route", runId: "current", sequence: "100" }],
+  });
+  fixture.history.set("older-page", {
+    messages: [
+      { id: "old-prompt", role: "user", text: "Past task" },
+      {
+        id: "call",
+        role: "assistant",
+        text: "",
+        toolCalls: [{ id: "old-call", name: "delegate_task", args: {} }],
+      },
+    ],
+    nextCursor: null,
+  });
+  fixture.snapshots.set("older-page", {
+    cursor: "one:100",
+    events: [
+      {
+        type: "delegation_plan",
+        runId: "past",
+        sequence: "10",
+        planId: "past-plan",
+        parentExecutionId: "old-prompt",
+        parentToolCallId: "old-call",
+        tasks: [],
+        status: "completed",
+      },
+    ],
+  });
+  const hook = renderHook(() => useWingman(connection));
   await waitFor(() => assert.equal(hook.result.current.stream, "live"));
+  await act(async () => hook.result.current.older());
   assert.equal(hook.result.current.activity.phase, "running");
+  assert.equal(hook.result.current.activity.runId, "current");
+  assert.equal(hook.result.current.history.nextCursor, null);
+  await act(async () => {
+    fixture.emit("one", { type: "done", runId: "current", text: "Finished" });
+  });
+  await waitFor(() =>
+    assert(fixture.calls.filter((call) => call.endpoint === "messages").length >= 4),
+  );
+  const { history, activity } = hook.result.current;
+  const [older] = transcript(history.messages, activity.events);
+  assert.deepEqual(
+    turnContent(older).map(({ type }) => type),
+    ["delegation"],
+  );
+  assert.equal(history.nextCursor, null);
 });

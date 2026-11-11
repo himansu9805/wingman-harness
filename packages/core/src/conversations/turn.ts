@@ -68,6 +68,8 @@ export interface TurnOptions {
     messageId?: string,
     source?: { taskId: string },
   ) => Promise<void>;
+  /** Stable ID for the human message that owns this API turn. */
+  userMessageId?: string;
   /** Bind server-created scheduled jobs to their catalogue thread. */
   schedulerThreadId?: string;
   /** Internal child ownership, set only by the delegation runner. */
@@ -340,7 +342,9 @@ export function startTurn(
 ): Promise<TurnResult> {
   return runTurn(
     agent,
-    { messages: [new HumanMessage({ id: randomUUID(), content: message })] },
+    {
+      messages: [new HumanMessage({ id: options.userMessageId ?? randomUUID(), content: message })],
+    },
     threadId,
     options,
   );

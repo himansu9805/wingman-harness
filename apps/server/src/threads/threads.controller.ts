@@ -35,8 +35,8 @@ export class ThreadsController {
 
   @Get(":threadId/messages")
   messages(@Param("threadId") threadId: string, @Query() query: unknown) {
-    const { limit, cursor } = parse(HistoryQuery, query);
-    return this.agent.messages(parse(ThreadId, threadId), limit, cursor);
+    const { limit, cursor, activity } = parse(HistoryQuery, query);
+    return this.agent.messages(parse(ThreadId, threadId), limit, cursor, activity === "true");
   }
 
   /** Latest durable metadata for each run, newest first. */

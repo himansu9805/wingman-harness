@@ -27,6 +27,7 @@ export const ListQuery = z.object({
 });
 export const HistoryQuery = ListQuery.extend({
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  activity: z.literal("true").optional(),
 });
 export const ListCursor = z
   .object({
@@ -39,6 +40,10 @@ export const HistoryCursor = z
     threadId: ThreadId,
     checkpointId: z.string().min(1).max(200),
     end: z.number().int().nonnegative(),
+    journalThrough: z
+      .string()
+      .regex(/^(0|[1-9][0-9]{0,18})$/)
+      .optional(),
   })
   .strict();
 

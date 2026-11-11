@@ -52,6 +52,7 @@ export type StreamStatus = "connecting" | "live" | "reconnecting" | "offline";
 interface WatchOptions {
   connection: Connection;
   threadId: string;
+  cursor?: string;
   signal: AbortSignal;
   /** Historical events are flagged until the server confirms its captured journal cursor. */
   onEvent: (event: ThreadEvent, id: string, replaying: boolean) => void;
@@ -84,12 +85,14 @@ function wait(ms: number, signal: AbortSignal) {
 /** Retries only the read subscription. Commands are never automatically resubmitted. */
 export async function watchEvents(options: WatchOptions): Promise<void> {
   const { connection, threadId, signal, onEvent, onStatus, onError } = options;
-  let cursor = "";
+  let cursor = options.cursor ?? "";
+  let connected = false;
   let retry = 1_000;
   while (!signal.aborted) {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      onStatus(cursor ? "reconnecting" : "connecting");
+      onStatus(connected ? "reconnecting" : "connecting");
+      connected = true;
       const response = await (options.fetcher ?? fetch)(
         `${connection.url}/threads/${encodeURIComponent(threadId)}/events`,
         {
@@ -124,7 +127,7 @@ export async function watchEvents(options: WatchOptions): Promise<void> {
         const payload = JSON.parse(frame.data) as ThreadEvent;
         if (payload.type !== frame.event || typeof payload.runId !== "string")
           throw new Error("Invalid event payload.");
-        onEvent(payload, frame.id, replaying);
+        onEvent({ ...payload, sequence }, frame.id, replaying);
         cursor = frame.id;
       });
       while (!signal.aborted) {
