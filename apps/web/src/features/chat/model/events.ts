@@ -8,6 +8,13 @@ export interface Activity {
 }
 export const emptyActivity: Activity = { phase: "idle", events: [] };
 
+/** Identify event records whose newer snapshots supersede earlier revisions. */
+function snapshotKey(event: ThreadEvent): string | undefined {
+  if (event.type === "run") return `run:${event.runId}`;
+  if (event.type === "delegation_plan") return `plan:${event.planId}`;
+  return undefined;
+}
+
 /** Update live activity from an event, replacing snapshots and excluding title-only notifications. */
 export function applyEvent(state: Activity, event: ThreadEvent): Activity {
   if (event.type === "thread_title") return state;
@@ -30,15 +37,9 @@ export function applyEvent(state: Activity, event: ThreadEvent): Activity {
             ? "error"
             : "running";
   // A snapshot replaces the previous version; usage values are already cumulative.
-  const previous =
-    event.type === "delegation_plan"
-      ? state.events.filter(
-          (item) => item.type !== "delegation_plan" || item.planId !== event.planId,
-        )
-      : event.type === "run"
-        ? state.events.filter((item) => item.type !== "run" || item.runId !== event.runId)
-        : state.events;
-  return { runId: event.runId, phase, events: [...previous, event].slice(-200) };
+  const key = snapshotKey(event);
+  const previous = key ? state.events.filter((item) => snapshotKey(item) !== key) : state.events;
+  return { runId: event.runId, phase, events: [...previous, event] };
 }
 
 /** Tool IDs, rather than names or run IDs, connect results across approval resumes. */
@@ -57,4 +58,27 @@ export function toolsWithResults(calls: ToolCall[], events: ThreadEvent[]): Tool
       ? { ...call, result: { output: result.output, truncated: result.truncated } }
       : call;
   });
+}
+
+/** Merge an older page without replacing newer live snapshots or changing the current run. */
+export function prependActivity(state: Activity, older: ThreadEvent[]): Activity {
+  const bySequence = new Map([...older, ...state.events].map((event) => [event.sequence, event]));
+  const chronological = [...bySequence.values()].sort((left, right) => {
+    const a = BigInt(left.sequence!);
+    const b = BigInt(right.sequence!);
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const seen = new Set<string>();
+  const events = chronological
+    .reverse()
+    .filter((event) => {
+      if (event.type === "thread_title") return false;
+      const key = snapshotKey(event);
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .reverse();
+  return { ...state, events };
 }

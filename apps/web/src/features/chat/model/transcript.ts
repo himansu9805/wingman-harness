@@ -27,9 +27,24 @@ export function transcript(messages: Message[], events: ThreadEvent[]): Transcri
   }
   const entries = [...runs];
   const assignment = new Map<string, number>();
-  // Match final replies backwards so repeated short replies stay on the right turn.
+  // New API runs share their turn ID with the saved human message.
+  const owners = new Map(
+    turns.flatMap((turn, index) => (turn.user ? [[turn.user.id, index] as const] : [])),
+  );
+  for (const [runId, run] of entries) {
+    const metadata = run.findLast((event) => event.type === "run");
+    if (metadata?.type !== "run") continue;
+    const owner = owners.get(metadata.metadata.turnId);
+    if (owner !== undefined) assignment.set(runId, owner);
+  }
+  // Older runs predate the shared ID. Match their final replies backwards.
   let before = turns.length;
   for (const [runId, run] of entries.toReversed()) {
+    const owner = assignment.get(runId);
+    if (owner !== undefined) {
+      if (run.some((event) => event.type === "done")) before = Math.min(before, owner);
+      continue;
+    }
     const done = run.findLast((event) => event.type === "done");
     if (done?.type !== "done") continue;
     for (let i = before - 1; i >= 0; i--) {

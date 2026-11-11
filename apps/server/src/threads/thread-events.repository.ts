@@ -20,6 +20,13 @@ export interface StoredThreadEvent {
   payload: ThreadEventPayload;
 }
 
+export interface SnapshotSelection {
+  messageIds: string[];
+  callIds: string[];
+  replies: { reply: string; take: number; skip: number }[];
+  latest: boolean;
+}
+
 export const THREAD_EVENTS = Symbol("THREAD_EVENTS");
 
 export interface ThreadEventsRepository {
@@ -33,6 +40,13 @@ export interface ThreadEventsRepository {
   listAfter(threadId: string, sequence: string, limit: number): Promise<StoredThreadEvent[]>;
 
   latest(threadId: string): Promise<string>;
+
+  /** Read page activity through an inclusive journal watermark. */
+  snapshot(
+    threadId: string,
+    through: string,
+    selection: SnapshotSelection,
+  ): Promise<StoredThreadEvent[]>;
 
   listRuns(
     threadId: string,
@@ -101,6 +115,20 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
     await pool.query(
       `CREATE INDEX IF NOT EXISTS thread_events_runs_idx ON thread_events (thread_id, run_id, sequence DESC) WHERE payload->>'type'='run'`,
     );
+    // Index the stable turn ID and legacy history anchors used to select page runs.
+    for (const [name, expression, predicate] of [
+      ["turn", "(payload->'metadata'->>'turnId')", "payload->>'type'='run'"],
+      ["owner", "(payload->>'parentExecutionId')", "payload->>'type'='delegation_plan'"],
+      ["call", "(payload->>'toolCallId')", "payload ? 'toolCallId'"],
+      ["reply", "md5(payload->>'text')", "payload->>'type'='done'"],
+    ]) {
+      await pool.query(`CREATE INDEX IF NOT EXISTS thread_events_snapshot_${name}_idx
+        ON thread_events (thread_id, ${expression}, sequence DESC) WHERE ${predicate}`);
+    }
+    await pool.query(`CREATE INDEX IF NOT EXISTS thread_events_title_idx
+      ON thread_events (thread_id, sequence DESC) WHERE payload->>'type'='thread_title'`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS thread_events_snapshot_run_idx
+      ON thread_events (thread_id, run_id, sequence DESC)`);
   }
   async append(
     threadId: string,
@@ -162,6 +190,71 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
       ORDER BY run_id, sequence DESC
     ) latest WHERE ($2::bigint IS NULL OR sequence < $2::bigint) ORDER BY sequence DESC LIMIT $3`,
       [threadId, before ?? null, limit],
+    );
+    return result.rows.map(eventRecord);
+  }
+  async snapshot(
+    threadId: string,
+    through: string,
+    selection: SnapshotSelection,
+  ): Promise<StoredThreadEvent[]> {
+    validateSequence(through);
+    const result = await (
+      await this.pool()
+    ).query<EventRow>(
+      `WITH anchors AS (
+        SELECT run_id FROM thread_events WHERE thread_id=$1 AND sequence <= $2
+          AND payload->>'type'='run' AND payload->'metadata'->>'turnId'=ANY($3::text[])
+        UNION
+        SELECT run_id FROM thread_events WHERE thread_id=$1 AND sequence <= $2
+          AND payload->>'type'='delegation_plan' AND payload->>'parentExecutionId'=ANY($3::text[])
+        UNION
+        SELECT run_id FROM thread_events WHERE thread_id=$1 AND sequence <= $2
+          AND payload ? 'toolCallId' AND payload->>'toolCallId'=ANY($4::text[])
+        UNION
+        SELECT found.run_id FROM jsonb_to_recordset($5::jsonb)
+          AS replies(reply text, take integer, skip integer) CROSS JOIN LATERAL (
+          SELECT run_id FROM thread_events WHERE thread_id=$1 AND sequence <= $2
+            AND payload->>'type'='done' AND md5(payload->>'text')=md5(replies.reply)
+            AND payload->>'text'=replies.reply ORDER BY sequence DESC LIMIT replies.take OFFSET replies.skip
+        ) found
+        UNION
+        (SELECT run_id FROM thread_events WHERE $6::boolean AND thread_id=$1 AND sequence <= $2
+          AND payload->>'type'<>'thread_title' ORDER BY sequence DESC LIMIT 1)
+      ), turns AS (
+        SELECT DISTINCT payload->'metadata'->>'turnId' AS id FROM thread_events
+        JOIN anchors USING (run_id) WHERE thread_id=$1 AND sequence <= $2 AND payload->>'type'='run'
+      ), runs AS (
+        SELECT run_id FROM anchors
+        UNION
+        SELECT run_id FROM thread_events JOIN turns ON payload->'metadata'->>'turnId'=turns.id
+          WHERE thread_id=$1 AND sequence <= $2 AND payload->>'type'='run'
+      ), relevant AS (
+        SELECT e.*, CASE e.payload->>'type'
+          WHEN 'run' THEN e.run_id::text
+          WHEN 'delegation_plan' THEN e.payload->>'planId'
+        END AS snapshot_key
+        FROM runs JOIN thread_events e USING (run_id)
+        WHERE e.thread_id=$1 AND e.sequence <= $2 AND e.payload->>'type'<>'thread_title'
+      ), ranked AS (
+        SELECT relevant.*, row_number() OVER (
+          PARTITION BY payload->>'type', snapshot_key ORDER BY sequence DESC
+        ) AS revision FROM relevant
+      )
+      SELECT thread_id, sequence, run_id, payload, created_at
+        FROM ranked WHERE snapshot_key IS NULL OR revision=1
+      UNION ALL
+      (SELECT * FROM thread_events WHERE $6::boolean AND thread_id=$1 AND sequence <= $2
+        AND payload->>'type'='thread_title' ORDER BY sequence DESC LIMIT 1)
+      ORDER BY sequence`,
+      [
+        threadId,
+        through,
+        selection.messageIds,
+        selection.callIds,
+        JSON.stringify(selection.replies),
+        selection.latest,
+      ],
     );
     return result.rows.map(eventRecord);
   }
@@ -261,6 +354,72 @@ export class MemoryThreadEventsRepository implements ThreadEventsRepository {
         .sort((a, b) => (BigInt(a.sequence) > BigInt(b.sequence) ? -1 : 1))
         .filter((row) => before === undefined || BigInt(row.sequence) < BigInt(before))
         .slice(0, limit),
+    );
+  }
+  async snapshot(
+    threadId: string,
+    through: string,
+    selection: SnapshotSelection,
+  ): Promise<StoredThreadEvent[]> {
+    this.assertOpen();
+    validateSequence(through);
+    const bounded = (this.rows.get(threadId) ?? [])
+      .filter((row) => BigInt(row.sequence) <= BigInt(through))
+      .reverse();
+    const title = selection.latest
+      ? bounded.find((row) => row.payload.type === "thread_title")
+      : undefined;
+    const rows = bounded.filter((row) => row.payload.type !== "thread_title");
+    const runs = new Set<string>();
+    const replies = new Map(
+      selection.replies.map(({ reply, take, skip }) => [reply, { take, skip }]),
+    );
+    if (selection.latest && rows.length) runs.add(rows[0].runId);
+    for (const { payload, runId } of rows) {
+      if (
+        (payload.type === "run" && selection.messageIds.includes(payload.metadata.turnId)) ||
+        (payload.type === "delegation_plan" &&
+          selection.messageIds.includes(payload.parentExecutionId)) ||
+        ("toolCallId" in payload &&
+          payload.toolCallId &&
+          selection.callIds.includes(payload.toolCallId))
+      )
+        runs.add(runId);
+      if (payload.type === "done") {
+        const window = replies.get(payload.text);
+        if (window?.skip) window.skip--;
+        else if (window?.take) {
+          runs.add(runId);
+          window.take--;
+        }
+      }
+    }
+    const turns = new Set(
+      rows.flatMap(({ payload, runId }) =>
+        payload.type === "run" && runs.has(runId) ? [payload.metadata.turnId] : [],
+      ),
+    );
+    for (const { payload, runId } of rows)
+      if (payload.type === "run" && turns.has(payload.metadata.turnId)) runs.add(runId);
+    const snapshots = new Set<string>();
+    return structuredClone(
+      bounded
+        .filter((row) => {
+          const { payload, runId } = row;
+          if (payload.type === "thread_title") return row === title;
+          if (!runs.has(runId)) return false;
+          const key =
+            payload.type === "run"
+              ? `run:${runId}`
+              : payload.type === "delegation_plan"
+                ? `plan:${payload.planId}`
+                : undefined;
+          if (key === undefined) return true;
+          if (snapshots.has(key)) return false;
+          snapshots.add(key);
+          return true;
+        })
+        .reverse(),
     );
   }
   async latest(threadId: string): Promise<string> {

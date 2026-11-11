@@ -1674,3 +1674,27 @@ test(
     }
   },
 );
+
+test(
+  "message activity snapshot includes the latest execution without transferring unrelated journal rows",
+  { timeout: TIMEOUT },
+  async (t) => {
+    const api = await server(
+      t,
+      fakeAgent(async function* () {}),
+    );
+    const oldRun = "00000000-0000-4000-8000-000000000001";
+    const newRun = "00000000-0000-4000-8000-000000000002";
+    for (let i = 0; i < 205; i++) {
+      await api.journal.append("fresh", oldRun, { type: "done", text: String(i) });
+    }
+    await api.journal.append("fresh", newRun, { type: "done", text: "Current" });
+    const snapshot = await api.json("fresh/messages?activity=true");
+    assert.equal(snapshot.activity.cursor, "fresh:206");
+    assert.deepEqual(
+      snapshot.activity.events.map(({ runId, sequence }) => ({ runId, sequence })),
+      [{ runId: newRun, sequence: "206" }],
+    );
+    assert.equal((await api.json("fresh/messages")).activity, undefined);
+  },
+);

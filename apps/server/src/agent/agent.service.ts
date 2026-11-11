@@ -38,6 +38,7 @@ import {
 import { decodeCursor, encodeCursor } from "../threads/cursors";
 import { TurnRunner } from "./turn-runner.service";
 import { THREAD_EVENTS, type ThreadEventsRepository } from "../threads/thread-events.repository";
+import { historyReplyWindows } from "../threads/history-activity";
 import { HistoryCursor, ListCursor, RunCursor } from "../threads/schemas";
 
 /** Owns the agent and serializes mutations of each API-managed thread. */
@@ -124,7 +125,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     };
   }
 
-  async messages(threadId: string, limit: number, cursor?: string) {
+  async messages(threadId: string, limit: number, cursor?: string, includeActivity = false) {
     await this.requireThread(threadId);
     const position = cursor ? decodeCursor(HistoryCursor, cursor) : undefined;
     if (position && position.threadId !== threadId) {
@@ -139,11 +140,45 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       throw new BadRequestException("Invalid history cursor");
     }
     const start = Math.max(0, end - limit);
+    const messages = history.messages.slice(start, end);
+    // Bound the journal read. Events committed after this watermark arrive via SSE.
+    const watermark = includeActivity
+      ? (position?.journalThrough ?? (await this.events.latest(threadId)))
+      : undefined;
+    const activity =
+      watermark === undefined
+        ? undefined
+        : {
+            cursor: `${threadId}:${watermark}`,
+            events: (
+              await this.events.snapshot(threadId, watermark, {
+                messageIds: messages
+                  .filter((message) => message.role === "user")
+                  .map((message) => message.id),
+                callIds: messages.flatMap(
+                  (message) => message.toolCalls?.map((call) => call.id) ?? [],
+                ),
+                replies: historyReplyWindows(messages, history.messages.slice(end)),
+                latest: !position,
+              })
+            ).map(({ payload, sequence, runId, createdAt }) => ({
+              ...payload,
+              sequence,
+              runId,
+              createdAt,
+            })),
+          };
     return {
-      messages: history.messages.slice(start, end),
+      messages,
+      ...(activity && { activity }),
       nextCursor:
         start > 0 && history.checkpointId
-          ? encodeCursor({ threadId, checkpointId: history.checkpointId, end: start })
+          ? encodeCursor({
+              threadId,
+              checkpointId: history.checkpointId,
+              end: start,
+              journalThrough: watermark,
+            })
           : null,
     };
   }
@@ -249,6 +284,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
       const result = await run({
         signal,
         schedulerThreadId: threadId,
+        userMessageId: metadata.turnId,
         onModelUsage: async (counts, _messageId, source) => {
           if (source) delegated.report(source.taskId);
           usage = addUsage(usage, counts);

@@ -63,6 +63,60 @@ test(
     assert.equal(previous[0].payload.metadata.status, "paused");
     assert.deepEqual(await reopened.listRuns("a", previous[0].sequence, 10), []);
     assert.deepEqual(await reopened.listRuns("b", undefined, 10), []);
+    await catalogue.create("snapshot");
+    const oldRun = randomUUID();
+    const middleRun = randomUUID();
+    const currentRun = randomUUID();
+    const resumedRun = randomUUID();
+    await reopened.append("snapshot", oldRun, { type: "done", text: "Same reply" });
+    await reopened.append("snapshot", middleRun, { type: "done", text: "Same reply" });
+    await reopened.append("snapshot", currentRun, {
+      type: "run",
+      metadata: { turnId: currentRun, status: "running" },
+    });
+    await reopened.append("snapshot", currentRun, {
+      type: "delegation_plan",
+      planId: "plan",
+      parentExecutionId: currentRun,
+      status: "running",
+    });
+    await reopened.append("snapshot", currentRun, {
+      type: "delegation_plan",
+      planId: "plan",
+      parentExecutionId: currentRun,
+      status: "completed",
+    });
+    await reopened.append("snapshot", currentRun, {
+      type: "run",
+      metadata: { turnId: currentRun, status: "paused" },
+    });
+    await reopened.append("snapshot", resumedRun, {
+      type: "run",
+      metadata: { turnId: currentRun, status: "completed" },
+    });
+    const through = await reopened.latest("snapshot");
+    await reopened.append("snapshot", resumedRun, { type: "done", text: "After watermark" });
+    const page = await reopened.snapshot("snapshot", through, {
+      messageIds: [currentRun],
+      callIds: [],
+      replies: [],
+      latest: true,
+    });
+    assert.deepEqual(
+      page.map(({ sequence }) => sequence),
+      ["5", "6", "7"],
+    );
+    assert.equal(page[0].payload.status, "completed");
+    const olderPage = await reopened.snapshot("snapshot", through, {
+      messageIds: [],
+      callIds: [],
+      replies: [{ reply: "Same reply", take: 1, skip: 1 }],
+      latest: false,
+    });
+    assert.deepEqual(
+      olderPage.map(({ runId }) => runId),
+      [oldRun],
+    );
     await catalogue.markDeleting("a");
     await assert.rejects(second.append("a", run, { type: "done", text: "bad" }));
     await catalogue.create("titled");

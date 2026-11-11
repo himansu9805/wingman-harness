@@ -1,4 +1,10 @@
-import type { Approval, Catalogue, Connection, History } from "../../../shared/contracts/types";
+import type {
+  Approval,
+  Catalogue,
+  Connection,
+  History,
+  HistorySnapshot,
+} from "../../../shared/contracts/types";
 
 import { ApiError, defaultConnection } from "../../../shared/api/connection";
 
@@ -48,6 +54,12 @@ export function createApi(
     history: (id: string, signal: AbortSignal, cursor?: string) =>
       request<History>(
         `${idPath(id)}/messages?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        signal,
+      ),
+    /** Fetch saved messages and the associated journal state for one page. */
+    snapshot: (id: string, signal: AbortSignal, cursor?: string) =>
+      request<HistorySnapshot>(
+        `${idPath(id)}/messages?limit=50&activity=true${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         signal,
       ),
     /** Fetch unresolved approvals for the conversation. */
