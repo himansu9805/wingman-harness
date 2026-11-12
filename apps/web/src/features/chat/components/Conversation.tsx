@@ -8,13 +8,36 @@ import {
   ChatMessageList,
   ChatSystemMessage,
 } from "@astryxdesign/core/Chat";
-import { StackItem, VStack } from "@astryxdesign/core/Layout";
+import * as stylex from "@stylexjs/stylex";
+import { HStack, StackItem, VStack } from "@astryxdesign/core/Layout";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Button } from "@astryxdesign/core/Button";
+import { ClickableCard } from "@astryxdesign/core/ClickableCard";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Icon } from "@astryxdesign/core/Icon";
 import { Text } from "@astryxdesign/core/Text";
+import { SearchIcon, Pen, Calendar } from "lucide-react";
 import { AssistantTurn } from "./AssistantTurn";
 import { transcript } from "../model/transcript";
 import type { Wingman } from "../model/useWingman";
+
+const recommendedPrompts = [
+  {
+    icon: SearchIcon,
+    label: "Research and analyze a topic",
+    prompt: "Analyze and provide report on impact of AI on job market.",
+  },
+  {
+    icon: Pen,
+    label: "Generate a creative story",
+    prompt: "Write a short story about a robot who discovers emotions.",
+  },
+  {
+    icon: Calendar,
+    label: "Schedule a task",
+    prompt: "Schedule a meeting with the team for next Monday at 10 AM.",
+  },
+];
 
 /** Render saved and live turns with a composer that preserves the current draft. */
 export function Conversation({ model }: { model: Wingman }) {
@@ -79,11 +102,37 @@ export function Conversation({ model }: { model: Wingman }) {
           )}
           {model.loading && <ChatSystemMessage>Loading conversation…</ChatSystemMessage>}
           {!model.loading && !model.history.messages.length && !running && (
-            <EmptyState
-              headingLevel={2}
-              title="What are we working on?"
-              description="Ask a question, run a task, or set a reminder. Wingman will ask before running commands that need approval."
-            />
+            <VStack gap={4} hAlign="center" vAlign="center" xstyle={styles.emptyState}>
+              <EmptyState
+                headingLevel={2}
+                title="What are we working on?"
+                description="Ask a question, run a task, or set a reminder. Wingman will ask before running commands that need approval."
+              />
+              <HStack gap={2} vAlign="stretch" xstyle={styles.promptGrid}>
+                {recommendedPrompts.map((item) => (
+                  <ClickableCard
+                    key={item.label}
+                    label={item.label}
+                    elevation="med"
+                    width="100%"
+                    height="100%"
+                    onClick={() => {
+                      setDraft(item.prompt);
+                    }}
+                  >
+                    <VStack gap={1} hAlign="stretch">
+                      <HStack gap={2} vAlign="center" hAlign="start">
+                        <Icon icon={item.icon} size="sm" />
+                        <Heading level={4}>{item.label}</Heading>
+                      </HStack>
+                      <Text type="body" color="secondary">
+                        {item.prompt}
+                      </Text>
+                    </VStack>
+                  </ClickableCard>
+                ))}
+              </HStack>
+            </VStack>
           )}
           {turns.map((turn, index) => (
             <Fragment key={turn.id}>
@@ -109,3 +158,26 @@ export function Conversation({ model }: { model: Wingman }) {
     </StackItem>
   );
 }
+
+const styles = stylex.create({
+  emptyState: {
+    flex: 1,
+    minHeight: "min-content",
+    padding: "var(--spacing-6)",
+  },
+  promptGrid: {
+    display: "grid",
+    width: "100%",
+    maxWidth: "48rem",
+    gridTemplateColumns: {
+      default: "repeat(3, minmax(0, 1fr))",
+      "@media (max-width: 600px)": "minmax(0, 1fr)",
+    },
+    gridAutoRows: "1fr",
+  },
+  route: {
+    backgroundColor: "var(--color-surface-2)",
+    borderRadius: "var(--border-radius-2)",
+    padding: "var(--spacing-2) var(--spacing-3)",
+  },
+});

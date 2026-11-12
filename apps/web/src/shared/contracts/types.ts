@@ -1,10 +1,11 @@
 import type { DelegationPlanSnapshot } from "./delegation";
-import type { RunMetadata } from "./run-metadata";
+import type { RunMetadata, RunStatus } from "./run-metadata";
 
 export interface Connection {
   url: string;
 }
 export interface Thread {
+  runStatus: RunStatus | null;
   hasScheduledTasks: boolean;
   source?: "chat" | "scheduled";
   scheduled?: { taskId: string; taskRunId: string; originThreadId: string | null } | null;

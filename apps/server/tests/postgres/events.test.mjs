@@ -56,6 +56,8 @@ test(
     const reopened = new events.PostgresThreadEventsRepository(url.toString());
     resources.push(reopened);
     await reopened.init();
+    assert.deepEqual(await reopened.latestStatuses(["a", "b"]), new Map([["a", "completed"]]));
+    assert.deepEqual(await reopened.latestStatuses([]), new Map());
     const latest = await reopened.listRuns("a", undefined, 1);
     assert.equal(latest[0].payload.metadata.status, "completed");
     const previous = await reopened.listRuns("a", latest[0].sequence, 10);

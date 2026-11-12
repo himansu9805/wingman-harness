@@ -58,3 +58,26 @@ test("run projection keeps only the latest snapshot per run before applying pagi
     "completed",
   );
 });
+
+test("latest statuses use the newest run per thread and omit missing runs", async () => {
+  const catalogue = new threads.MemoryThreadRepository();
+  await catalogue.create("running");
+  await catalogue.create("paused");
+  await catalogue.create("empty");
+  const store = new events.MemoryThreadEventsRepository(catalogue);
+  const run = "00000000-0000-4000-8000-000000000001";
+  await store.append("running", run, { type: "run", metadata: { status: "completed" } });
+  await store.append("running", run, { type: "run", metadata: { status: "running" } });
+  await store.append("paused", run, { type: "run", metadata: { status: "paused" } });
+  assert.deepEqual(
+    await store.latestStatuses(["running", "paused", "empty"]),
+    new Map([
+      ["running", "running"],
+      ["paused", "paused"],
+    ]),
+  );
+  await store.append("running", run, { type: "run", metadata: { status: "completed" } });
+  assert.equal((await store.latestStatuses(["running"])).get("running"), "completed");
+  await store.close();
+  await catalogue.close();
+});

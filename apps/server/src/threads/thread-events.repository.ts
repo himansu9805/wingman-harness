@@ -54,6 +54,9 @@ export interface ThreadEventsRepository {
     limit: number,
   ): Promise<StoredThreadEvent[]>;
 
+  /** Return the latest durable run status for each requested thread. */
+  latestStatuses(threadIds: string[]): Promise<Map<string, RunMetadata["status"]>>;
+
   delete(threadId: string): Promise<void>;
 
   close(): Promise<void>;
@@ -129,6 +132,8 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
       ON thread_events (thread_id, sequence DESC) WHERE payload->>'type'='thread_title'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS thread_events_snapshot_run_idx
       ON thread_events (thread_id, run_id, sequence DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS thread_events_latest_status_idx
+      ON thread_events (thread_id, sequence DESC) WHERE payload->>'type'='run'`);
   }
   async append(
     threadId: string,
@@ -265,6 +270,27 @@ export class PostgresThreadEventsRepository implements ThreadEventsRepository {
       threadId,
     ]);
     return result.rows[0]?.event_sequence ?? "0";
+  }
+  async latestStatuses(threadIds: string[]): Promise<Map<string, RunMetadata["status"]>> {
+    if (threadIds.length === 0) return new Map();
+
+    const result = await (
+      await this.pool()
+    ).query<{
+      thread_id: string;
+      status: RunMetadata["status"];
+    }>(
+      `SELECT DISTINCT ON (thread_id)
+        thread_id,
+        payload->'metadata'->>'status' AS status
+      FROM thread_events
+      WHERE thread_id = ANY($1::text[])
+        AND payload->>'type'='run'
+      ORDER BY thread_id, sequence DESC`,
+      [threadIds],
+    );
+
+    return new Map(result.rows.map((row) => [row.thread_id, row.status]));
   }
   async delete(threadId: string): Promise<void> {
     await (await this.pool()).query(`DELETE FROM thread_events WHERE thread_id=$1`, [threadId]);
@@ -425,6 +451,26 @@ export class MemoryThreadEventsRepository implements ThreadEventsRepository {
   async latest(threadId: string): Promise<string> {
     this.assertOpen();
     return String(this.sequences.get(threadId) ?? 0n);
+  }
+  async latestStatuses(threadIds: string[]): Promise<Map<string, RunMetadata["status"]>> {
+    this.assertOpen();
+
+    const statuses = new Map<string, RunMetadata["status"]>();
+
+    for (const threadId of threadIds) {
+      const rows = this.rows.get(threadId) ?? [];
+
+      for (let index = rows.length - 1; index >= 0; index--) {
+        const payload = rows[index].payload;
+
+        if (payload.type === "run") {
+          statuses.set(threadId, payload.metadata.status);
+          break;
+        }
+      }
+    }
+
+    return statuses;
   }
   async delete(threadId: string): Promise<void> {
     this.assertOpen();

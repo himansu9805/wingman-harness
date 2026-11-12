@@ -51,7 +51,7 @@ export function AssistantTurn({
                   placement="above"
                   content={
                     route.probabilities && (
-                      <Text type="supporting">
+                      <Text type="inherit">
                         {Object.entries(route.probabilities)
                           .map(([name, score]) => `${name}: ${(score * 100).toFixed(2)}%`)
                           .join(" · ")}
@@ -94,7 +94,7 @@ export function AssistantTurn({
           )}
           {metadata && <RunSummary run={metadata} />}
           {running && (
-            <Text type="supporting" role="status">
+            <Text type="body" role="status" xstyle={styles.working}>
               Working…
             </Text>
           )}
@@ -104,7 +104,26 @@ export function AssistantTurn({
   );
 }
 
+const shimmer = stylex.keyframes({
+  from: { backgroundPosition: "200% 0" },
+  to: { backgroundPosition: "-200% 0" },
+});
+
 const styles = stylex.create({
+  working: {
+    fontSize: "calc(var(--font-size-base) * 0.9)",
+    alignSelf: "flex-start",
+    color: "transparent",
+    WebkitTextFillColor: "transparent",
+    backgroundImage:
+      "linear-gradient(90deg, var(--color-text-secondary) 15%, var(--color-text-primary) 45%, var(--color-text-primary) 55%, var(--color-text-secondary) 85%)",
+    backgroundSize: "200% 100%",
+    backgroundClip: "text",
+    animationName: { default: shimmer, "@media (prefers-reduced-motion: reduce)": "none" },
+    animationDuration: "2.4s",
+    animationTimingFunction: "linear",
+    animationIterationCount: "infinite",
+  },
   route: { marginBottom: "var(--spacing-1)" },
-  answer: { marginTop: "var(--spacing-4)" },
+  answer: { marginTop: "var(--spacing-1)" },
 });
