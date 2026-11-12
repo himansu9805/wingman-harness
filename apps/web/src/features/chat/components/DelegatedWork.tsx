@@ -119,7 +119,7 @@ function Task({ task, events }: { task: DelegationTask; events: ThreadEvent[] })
   );
 }
 const styles = stylex.create({
-  plan: { marginTop: "var(--spacing-3)", marginBottom: "var(--spacing-3)" },
+  plan: { marginTop: "var(--spacing-1)", marginBottom: "var(--spacing-1)" },
   details: { paddingInlineStart: "var(--spacing-5)", paddingBlockEnd: "var(--spacing-2)" },
   notice: { paddingInlineStart: "var(--spacing-5)" },
 });

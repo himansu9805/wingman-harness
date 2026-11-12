@@ -15,6 +15,13 @@
     "**/coverage/**",
     "apps/web/src/astryx-themes.js",
     "apps/web/AGENTS.md",
-    "apps/web/GEMINI.md"
+    "apps/web/GEMINI.md",
+    "apps/web/src/themes/neutral/neutral.css",
+    "apps/web/src/themes/neutral/neutral.css.d.ts",
+    "apps/web/src/themes/neutral/neutral.js",
+    "apps/web/src/themes/neutral/neutral.d.ts",
+    "apps/web/src/themes/neutral/neutral.variants.d.ts",
+    "apps/web/src/themes/neutral/*.generated.ts",
+    "apps/web/src/themes/neutral/*.generated.receipt.json"
   ]
 }

@@ -9,13 +9,9 @@ import { runSummary, usageDetails } from "../model/run-summary";
 export function RunSummary({ run }: { run: RunMetadata }) {
   if (run.status === "running") return null;
   return (
-    <HStack gap={2} vAlign="center" xstyle={styles.footer}>
-      <Tooltip content={<Text type="supporting">{usageDetails(run)}</Text>}>
-        <Text type="supporting" tabIndex={0}>
-          {runSummary(run).join(" · ")}
-        </Text>
-      </Tooltip>
-    </HStack>
+    <Text type="supporting" tabIndex={0} xstyle={styles.footer}>
+      {runSummary(run).join(" · ")}
+    </Text>
   );
 }
-const styles = stylex.create({ footer: { marginTop: "var(--spacing-3)" } });
+const styles = stylex.create({ footer: { marginTop: "var(--spacing-2)" } });

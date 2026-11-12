@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { SideNav, SideNavSection, SideNavItem } from "@astryxdesign/core/SideNav";
 import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
+import { Spinner } from "@astryxdesign/core/Spinner";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
@@ -65,28 +67,16 @@ export function ThreadSidebar({
           />
         }
       >
-        {model.threads.map((thread) => {
-          const hasScheduledTasks = thread.hasScheduledTasks;
-          return (
-            <SideNavItem
-              key={thread.id}
-              label={hasScheduledTasks ? `${thread.title} · Scheduled` : thread.title}
-              icon={hasScheduledTasks ? Clock : MessageSquare}
-              isSelected={!scheduled && thread.id === model.threadId}
-              onClick={() => onSelect(thread.id)}
-              actions={
-                <Button
-                  label={`Delete ${thread.title}`}
-                  icon={<Icon icon={Trash2} />}
-                  isIconOnly
-                  variant="ghost"
-                  isDisabled={model.working}
-                  onClick={() => onDelete(thread)}
-                />
-              }
-            />
-          );
-        })}
+        {model.threads.map((thread) => (
+          <ConversationItem
+            key={thread.id}
+            thread={thread}
+            model={model}
+            scheduled={scheduled}
+            onDelete={onDelete}
+            onSelect={onSelect}
+          />
+        ))}
         {!model.threads.length && (
           <Text type="supporting">Your conversations will appear here.</Text>
         )}
@@ -99,6 +89,64 @@ export function ThreadSidebar({
         />
       )}
     </SideNav>
+  );
+}
+
+/** Show conversation actions while the row is hovered or contains keyboard focus. */
+function ConversationItem({
+  thread,
+  model,
+  scheduled,
+  onDelete,
+  onSelect,
+}: {
+  thread: Thread;
+  model: Wingman;
+  scheduled: boolean;
+  onDelete: (thread: Thread) => void;
+  onSelect: (id: string) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const isSelected = thread.id === model.threadId;
+  const isRunning =
+    isSelected && model.activity.phase !== "idle"
+      ? model.activity.phase === "running"
+      : thread.runStatus === "running";
+
+  return (
+    <section
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") setHovered(true);
+      }}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}
+    >
+      <SideNavItem
+        label={thread.hasScheduledTasks ? `${thread.title} · Scheduled` : thread.title}
+        icon={thread.hasScheduledTasks ? Clock : MessageSquare}
+        isSelected={!scheduled && isSelected}
+        endContent={
+          isRunning ? <Spinner size="sm" aria-label={`Processing ${thread.title}`} /> : undefined
+        }
+        onClick={() => onSelect(thread.id)}
+        actions={
+          !isRunning && (hovered || focused) ? (
+            <Button
+              label={`Delete ${thread.title}`}
+              icon={<Icon icon={Trash2} />}
+              isIconOnly
+              variant="ghost"
+              isDisabled={model.working}
+              onClick={() => onDelete(thread)}
+            />
+          ) : undefined
+        }
+      />
+    </section>
   );
 }
 

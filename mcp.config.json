@@ -6,7 +6,7 @@
       "args": ["--no-install", "openserp-mcp", "--stdio"],
       "env": {
         "OPENSERP_BACKEND": "oss",
-        "OPENSERP_BASE_URL": "http://127.0.0.1:7000"
+        "OPENSERP_BASE_URL": "https://openserp.apps.home.arpa"
       }
     }
   },
