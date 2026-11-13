@@ -36,6 +36,7 @@ describe("toArgv", () => {
     "pwd || ls",
     "pwd & ls",
     "echo hello > output.txt",
+    "cat <<'EOF' > server.py\nprint('hello')\nEOF",
     "echo hello >> output.txt",
     "cat < input.txt",
     "cat 2> errors.txt",
@@ -54,6 +55,12 @@ describe("toArgv", () => {
 });
 
 describe("checkCommand", () => {
+  it("requires approval for sandbox commands denied on the host", () => {
+    for (const command of ["rm", "kill", "sudo", "shutdown"]) {
+      assert.equal(checkCommand([command, "target"], "host"), "deny");
+      assert.equal(checkCommand([command, "target"], "sandbox"), "ask");
+    }
+  });
   for (const argv of [
     ["pwd"],
     ["git", "status"],

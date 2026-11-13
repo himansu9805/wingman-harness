@@ -27,7 +27,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import ../../tests/setup.mjs --import tsx --test tests/*.test.*",
     "test:postgres": "node --import ../../tests/setup.mjs --import tsx --test tests/postgres/*.test.mjs",
-    "test:research": "node --import tsx --test tests/integration/openserp.test.mjs"
+    "test:research": "node --import tsx --test tests/integration/openserp.test.mjs",
+    "test:docker": "node --import tsx --test tests/integration/docker-sandbox.test.mjs"
   },
   "dependencies": {
     "@agendajs/postgres-backend": "^3.0.6",

@@ -56,6 +56,10 @@ test("private proxy rejects foreign origins and unrelated backend paths", () => 
   assert.equal(checkGuard(config, "/api/tasks").next, true);
   assert.equal(checkGuard(config, "/api/tasks/runs?jobId=test").next, true);
   assert.equal(checkGuard(config, "/api/tasks/test").next, true);
+  assert.equal(checkGuard(config, "/api/sandboxes").next, true);
+  assert.equal(checkGuard(config, "/api/sandboxes/chat-1/output").next, true);
+  assert.equal(checkGuard(config, "/api/sandboxes/chat-1/exec").status, 404);
+  assert.equal(checkGuard(config, "/api/sandboxesevil").status, 404);
   assert.equal(checkGuard(config, "/api/tasksevil").status, 404);
   assert.equal(checkGuard(config, "/api/tasks/../admin").status, 404);
   assert.equal(checkGuard(config, "/api/admin").status, 404);

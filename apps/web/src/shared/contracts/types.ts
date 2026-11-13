@@ -17,12 +17,14 @@ export interface Thread {
 export interface Approval {
   id: string;
   command: string;
+  target: "host" | "sandbox";
   execution: { agentId: string; taskId: string | null; toolCallId: string };
 }
 export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  target?: "host" | "sandbox";
   result?: { output: string; truncated: boolean };
   decision?: boolean;
 }
@@ -72,7 +74,13 @@ export type ThreadEvent = { runId: string; createdAt?: string; sequence?: string
       taskId: string;
       agentId: string;
       event:
-        | { type: "tool_call" | "memory"; name: string; args: unknown; toolCallId?: string }
+        | {
+            type: "tool_call" | "memory";
+            name: string;
+            args: unknown;
+            toolCallId?: string;
+            target?: "host" | "sandbox";
+          }
         | { type: "skill"; name: string; toolCallId?: string }
         | {
             type: "tool_result";
@@ -89,6 +97,7 @@ export type ThreadEvent = { runId: string; createdAt?: string; sequence?: string
       name: string;
       args: Record<string, unknown>;
       toolCallId?: string;
+      target?: "host" | "sandbox";
     }
   | { type: "skill"; name: string; toolCallId?: string }
   | { type: "tool_result"; name: string; toolCallId: string; output: string; truncated: boolean }

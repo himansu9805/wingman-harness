@@ -258,6 +258,7 @@ export class DelegationRunner {
         signal,
         ...(task.schedulerThreadId ? { schedulerThreadId: task.schedulerThreadId } : {}),
         delegatedTaskId: task.taskId,
+        conversationId: task.conversationId,
         onEvent: async (event: TurnEvent) => {
           if (
             event.type === "tool_call" ||

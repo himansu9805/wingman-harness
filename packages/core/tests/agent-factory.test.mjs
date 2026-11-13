@@ -39,6 +39,9 @@ class RecordingModel extends BaseChatModel {
         .map((message) => message.text)
         .join("\n"),
       tools: this.boundTools.map((tool) => tool.name),
+      toolDescriptions: Object.fromEntries(
+        this.boundTools.map((tool) => [tool.name, tool.description]),
+      ),
       messages,
     });
     const message = this.respond ? await this.respond(messages) : new AIMessage(this.label);
@@ -54,8 +57,98 @@ const role = (id, capabilities = {}, model = "powerful") => ({
   instructions: `Instructions for ${id}.`,
   capabilities: { ...analystAgentDefinition.capabilities, ...capabilities },
 });
+
+test("orchestrator and operator receive the actual shell syntax limits before delegation", async () => {
+  const { runtime, trace } = await fixture({
+    definitions: [
+      createOrchestratorAgentDefinition(),
+      analystAgentDefinition,
+      operatorAgentDefinition,
+      researcherAgentDefinition,
+    ],
+    globalTools: createLocalTools([]),
+  });
+  try {
+    await startTurn(
+      await Agent.create(runtime),
+      "Save a file using a heredoc",
+      "planning-thread",
+      options(),
+    );
+    const orchestrator = trace.models.at(-1);
+    assert.match(
+      orchestrator.prompt,
+      /do not instruct a specialist to use syntax it does not support/i,
+    );
+    assert.match(orchestrator.prompt, /do not claim the file was saved or checked/i);
+    assert.match(
+      orchestrator.toolDescriptions.delegate_task,
+      /operator:.*host execution rejects heredocs, redirection/i,
+    );
+
+    await startTurn(
+      await Agent.create(runtime, "operator"),
+      "Save a file using a heredoc",
+      "operator-thread",
+      options(),
+    );
+    const operator = trace.models.at(-1);
+    assert.match(operator.prompt, /no heredocs, redirection/i);
+    assert.match(operator.prompt, /do not use a shell interpreter or generated code to bypass/i);
+    assert.match(operator.prompt, /instead of claiming a file was saved or verified/i);
+  } finally {
+    await runtime.close();
+  }
+});
 const simpleTool = (name) =>
   tool(async () => name, { name, description: name, schema: z.object({}) });
+
+test("sandbox operators advertise approved shell scripts for file creation", async () => {
+  const executor = {
+    target: "sandbox",
+    async execute() {
+      throw new Error("not used");
+    },
+    async executeShell() {
+      throw new Error("not used");
+    },
+  };
+  const { runtime, trace } = await fixture({
+    definitions: [
+      createOrchestratorAgentDefinition(),
+      analystAgentDefinition,
+      operatorAgentDefinition,
+      researcherAgentDefinition,
+    ],
+    globalTools: createLocalTools([], executor),
+    commandTarget: "sandbox",
+    sandboxShell: true,
+  });
+  try {
+    await startTurn(
+      await Agent.create(runtime),
+      "Create a Python script",
+      "sandbox-planner",
+      options(),
+    );
+    const planner = trace.models.at(-1);
+    assert.match(planner.prompt, /showing code in a reply is not the same as creating the file/i);
+    assert.match(
+      planner.toolDescriptions.delegate_task,
+      /operator:.*sandbox mode.*heredocs and redirection.*approval/i,
+    );
+    await startTurn(
+      await Agent.create(runtime, "operator"),
+      "Create a Python script",
+      "sandbox-operator",
+      options(),
+    );
+    assert.match(trace.models.at(-1).prompt, /heredocs, pipes and redirection are supported/i);
+    assert.match(trace.models.at(-1).prompt, /save it in the sandbox and verify/i);
+  } finally {
+    await runtime.close();
+  }
+});
 
 async function fixture({
   definitions,
@@ -64,6 +157,8 @@ async function fixture({
   skills = [],
   respond,
   mcpTools = [],
+  commandTarget = "host",
+  sandboxShell = false,
 } = {}) {
   const trace = { models: [], routing: 0, memory: 0, mcp: [], skills: [], closed: [] };
   const fast = new RecordingModel("fast", trace, respond);
@@ -103,6 +198,8 @@ async function fixture({
         definitions: definitions ?? [role("orchestrator", {}, "routed"), role("analyst")],
         globalTools,
         agentTools,
+        commandTarget,
+        sandboxShell,
         models: { fast, powerful, routingMiddleware },
       };
     },

@@ -91,7 +91,13 @@ test("runTurn emits route, tool, skill and memory events and consumes the whole 
   );
   assert.deepEqual(events, [
     { type: "route", choice: "powerful", confidence: 0.8 },
-    { type: "tool_call", name: "exec_bash_command", args: { command: "pwd" }, toolCallId: "1" },
+    {
+      type: "tool_call",
+      name: "exec_bash_command",
+      args: { command: "pwd" },
+      toolCallId: "1",
+      target: "host",
+    },
     { type: "skill", name: "haiku", toolCallId: "2" },
     { type: "memory", name: "recall_memory", args: { name: "User" }, toolCallId: "3" },
   ]);
@@ -105,6 +111,7 @@ test("interrupts take precedence over a provisional final message", async () => 
     approvals: pending.map((item) => ({
       id: item.id,
       command: item.value.command,
+      target: "host",
       execution: item.value.execution,
     })),
   });
@@ -161,6 +168,7 @@ test("pending approvals are flattened across tasks", async () => {
     ["a", "b"].map((id) => ({
       id,
       command: id,
+      target: "host",
       execution: { agentId: "orchestrator", taskId: null, toolCallId: id },
     })),
   );

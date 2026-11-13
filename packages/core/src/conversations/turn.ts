@@ -42,7 +42,13 @@ export type TurnEvent =
     }
   | { type: "skill"; name: string; toolCallId?: string }
   | { type: "memory"; name: string; args: unknown; toolCallId?: string }
-  | { type: "tool_call"; name: string; args: unknown; toolCallId?: string }
+  | {
+      type: "tool_call";
+      name: string;
+      args: unknown;
+      toolCallId?: string;
+      target?: "host" | "sandbox";
+    }
   | {
       type: "tool_result";
       name: string;
@@ -70,6 +76,8 @@ export interface TurnOptions {
   ) => Promise<void>;
   /** Stable ID for the human message that owns this API turn. */
   userMessageId?: string;
+  /** Originating conversation for delegated workers with independent checkpoints. */
+  conversationId?: string;
   /** Bind server-created scheduled jobs to their catalogue thread. */
   schedulerThreadId?: string;
   /** Internal child ownership, set only by the delegation runner. */
@@ -88,7 +96,11 @@ export type TurnResult =
  * @param message The AI message containing tool calls.
  * @param onEvent Receives one event per tool call.
  */
-async function emitToolCalls(message: AIMessage, onEvent: TurnEventHandler): Promise<void> {
+async function emitToolCalls(
+  message: AIMessage,
+  onEvent: TurnEventHandler,
+  commandTarget: "host" | "sandbox",
+): Promise<void> {
   for (const call of message.tool_calls ?? []) {
     const identity = call.id ? { toolCallId: call.id } : {};
 
@@ -107,6 +119,7 @@ async function emitToolCalls(message: AIMessage, onEvent: TurnEventHandler): Pro
         type: "tool_call",
         name: call.name,
         args: call.args,
+        ...(call.name === "exec_bash_command" ? { target: commandTarget } : {}),
         ...identity,
       });
     }
@@ -147,11 +160,13 @@ export async function runTurn(
     onModelUsage = async () => {},
     schedulerThreadId,
     delegatedTaskId,
+    conversationId,
   }: TurnOptions,
 ): Promise<TurnResult> {
   const stream = await agent.app.stream(input, {
     configurable: {
       thread_id: threadId,
+      conversation_id: conversationId ?? threadId,
       agent_id: agent.id,
       ...(delegatedTaskId ? { delegated_task_id: delegatedTaskId } : {}),
       checkpoint_ns: "",
@@ -236,7 +251,7 @@ export async function runTurn(
       await onModelUsage(modelUsage(message), message.id);
     }
     if (message.tool_calls && message.tool_calls.length > 0) {
-      await emitToolCalls(message, onEvent);
+      await emitToolCalls(message, onEvent, agent.commandTarget ?? "host");
     } else {
       finalMessage = message;
     }
@@ -362,6 +377,12 @@ export async function resumeTurn(
   options: TurnOptions,
 ): Promise<TurnResult> {
   const interrupts = await nativeApprovals(agent, threadId);
+  const target = agent.commandTarget ?? "host";
+  for (const approval of pendingApprovals(interrupts)) {
+    if (answers[approval.id] === true && approval.target !== target) {
+      throw new Error("Command execution target changed since approval was requested");
+    }
+  }
   return runTurn(
     agent,
     new Command({ resume: approvalAnswers(interrupts, answers) }),

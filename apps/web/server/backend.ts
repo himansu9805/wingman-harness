@@ -34,8 +34,10 @@ export function apiGuard(config: ReturnType<typeof backendConfig>) {
       response.end(JSON.stringify({ message }));
     };
     const taskPath = /^\/api\/tasks(?:\/(?:runs|[\w-]{1,64}))?\/?$/.test(path.split("?")[0]);
+    const sandboxPath = /^\/api\/sandboxes(?:\/[\w-]{1,64}\/output)?\/?$/.test(path.split("?")[0]);
     if (
       !taskPath &&
+      !sandboxPath &&
       !/^\/api\/threads(?:\/[\w-]{1,64}(?:\/(?:messages|pending|resume|events))?)?\/?$/.test(
         path.split("?")[0],
       )

@@ -1,6 +1,7 @@
 import { ThreadTitles, TITLE_TIMEOUT_MS } from "./threads/thread-titles.service";
 import { TITLE_GENERATOR, titleGenerator } from "./threads/title-generator";
 import { TasksController } from "./tasks/tasks.controller";
+import { SandboxesController } from "./sandboxes/sandboxes.controller";
 import { TurnRunner } from "./agent/turn-runner.service";
 import { THREAD_EVENTS, PostgresThreadEventsRepository } from "./threads/thread-events.repository";
 import { Module } from "@nestjs/common";
@@ -11,7 +12,7 @@ import { AGENT_RUNTIME, agentRuntime } from "./agent/agent.runtime";
 import { THREAD_REPOSITORY, PostgresThreadRepository } from "./threads/thread.repository";
 
 @Module({
-  controllers: [ThreadsController, TasksController],
+  controllers: [ThreadsController, TasksController, SandboxesController],
   providers: [
     AgentService,
     TurnRunner,

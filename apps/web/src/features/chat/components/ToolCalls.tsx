@@ -128,7 +128,14 @@ export function ToolCalls({
       : running
         ? ("running" as const)
         : ("pending" as const),
-    stats: call.decision === false ? <Text type="supporting">Declined by user</Text> : undefined,
+    stats:
+      call.target || call.decision === false ? (
+        <Text type="supporting">
+          {call.target === "sandbox" ? "Sandbox" : call.target === "host" ? "Host" : ""}
+          {call.target && call.decision === false ? " · " : ""}
+          {call.decision === false ? "Declined by user" : ""}
+        </Text>
+      ) : undefined,
     resultDetail: call.result ? <ToolOutput result={call.result} name={call.name} /> : undefined,
   }));
   if (!grouped)

@@ -25,6 +25,7 @@ docs: |-
   Use Replay events with the last received id to reconnect.
   delegation events identify the plan, task key, agent and internal task execution.
   agent_activity wraps child tool events; scope toolCallId by taskId, not tool name.
+  exec_bash_command tool_call events include target: host or sandbox.
   delegation_plan is a complete bounded snapshot: replace the previous planId snapshot.
   Snapshots include every task, including pending/blocked tasks, results and per-child usage/timing.
   run.metadata.turn.usage already includes workers: do not add task totals to it.

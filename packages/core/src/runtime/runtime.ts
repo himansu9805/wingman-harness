@@ -1,3 +1,4 @@
+import type { SandboxMonitor } from "../capabilities/execution/sandbox-monitor";
 import { DelegationCoordinator } from "../delegation/coordinator";
 import type { McpConnections } from "../integrations/mcp/client";
 import type { CheckpointStore } from "../integrations/postgres/checkpointer";
@@ -23,6 +24,9 @@ export class CoreRuntime {
   readonly agents: AgentRegistry;
   readonly toolCatalogue: AgentToolCatalogue;
   readonly models: AgentModels;
+  readonly commandTarget: "host" | "sandbox";
+  readonly sandboxShell: boolean;
+  readonly sandboxMonitor?: SandboxMonitor;
   readonly delegations: DelegationRunner;
   readonly plans: DelegationCoordinator;
   private readonly executionResources: readonly ExecutionResources[];
@@ -36,6 +40,10 @@ export class CoreRuntime {
     configuration: AgentConfiguration,
     private readonly delegationStore: DelegationStore,
   ) {
+    this.commandTarget = configuration.commandTarget ?? "host";
+    this.sandboxShell =
+      configuration.commandTarget === "sandbox" && configuration.sandboxShell === true;
+    this.sandboxMonitor = configuration.sandboxMonitor;
     this.executionResources = configuration.executionResources ?? [];
     this.prepareModule = configuration.prepareAgent;
     const ids = new Set<string>();
@@ -46,9 +54,14 @@ export class CoreRuntime {
     const agentTools = { ...configuration.agentTools };
     for (const definition of configuration.definitions) {
       if (!definition.delegation?.agents.length) continue;
-      const targets = configuration.definitions.filter((target) =>
-        definition.delegation.agents.includes(target.id),
-      );
+      const targets = configuration.definitions
+        .filter((target) => definition.delegation.agents.includes(target.id))
+        .map((target) => ({
+          ...target,
+          description: target.capabilities.useGlobalTools?.includes("exec_bash_command")
+            ? `${target.description} ${this.sandboxShell ? "In sandbox mode, shell scripts, heredocs and redirection are supported with approval." : `${this.commandTarget === "sandbox" ? "Sandbox" : "Host"} execution rejects heredocs, redirection and other shell syntax.`}`
+            : target.description,
+        }));
       agentTools[definition.id] = [
         ...(agentTools[definition.id] ?? []),
         createDelegationTool(

@@ -34,7 +34,7 @@ export function ApprovalCard({
     <Banner
       status="warning"
       title="Your approval is needed"
-      description="Review the commands before they run on the server."
+      description="Review each command and its execution target."
       collapsible={false}
     >
       <VStack gap={4}>
@@ -42,7 +42,7 @@ export function ApprovalCard({
           <VStack key={approval.id} gap={2}>
             <CodeBlock
               language="bash"
-              title={`${owner(approval)} · Command ${index + 1}`}
+              title={`${owner(approval)} · ${approval.target === "sandbox" ? "Sandbox" : "Host"} · Command ${index + 1}`}
               code={approval.command}
             />
             <HStack gap={2} wrap="wrap">

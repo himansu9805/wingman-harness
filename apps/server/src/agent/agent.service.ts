@@ -97,6 +97,11 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     return this.runner.shutdownSignal;
   }
 
+  /** Read-only access to the sandbox monitor when Docker execution is enabled. */
+  get sandboxMonitor() {
+    return this.agent.sandboxMonitor;
+  }
+
   async create() {
     const id = randomUUID();
     await this.threads.create(id);

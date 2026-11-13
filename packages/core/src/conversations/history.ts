@@ -85,5 +85,6 @@ export async function deleteThreadState(agent: Agent, threadId: string): Promise
     throw new Error("The graph checkpointer does not support thread deletion");
   }
   await agent.deleteDelegatedState(threadId);
+  await agent.releaseConversation(threadId);
   await checkpointer.deleteThread(threadId);
 }
