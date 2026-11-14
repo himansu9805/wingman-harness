@@ -123,6 +123,7 @@ export function liveCalls(turn: TranscriptTurn): ToolCall[] {
     calls.set(id, {
       id,
       name: event.type === "skill" ? "load_skill" : event.name,
+      ...(event.type === "tool_call" && event.target ? { target: event.target } : {}),
       args: event.type === "skill" ? { name: event.name } : "args" in event ? event.args : {},
     });
   });

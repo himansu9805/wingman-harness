@@ -65,3 +65,13 @@ jobs:
         run: npm run test:postgres
         env:
           TEST_POSTGRES_CONNECTION_STRING: postgres://wingman_test:wingman_test@localhost:5432/wingman_test
+
+      - name: Test Docker sandbox and persistent PTY
+        run: npm run test:docker -w @wingman/core
+        env:
+          TEST_POSTGRES_CONNECTION_STRING: postgres://wingman_test:wingman_test@localhost:5432/wingman_test
+
+      - name: Test sandbox WebSocket integration
+        run: npm run test:sandbox -w @wingman/server
+        env:
+          TEST_POSTGRES_CONNECTION_STRING: postgres://wingman_test:wingman_test@localhost:5432/wingman_test

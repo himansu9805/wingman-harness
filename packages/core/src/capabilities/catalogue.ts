@@ -4,7 +4,8 @@ import { loadSkillContent, type SkillMeta } from "../skills/catalogue";
 import { settings } from "../settings";
 import { memoryTools } from "./memory";
 import { schedulerTools } from "./scheduler";
-import { bashTools } from "./commands";
+import { createCommandTool } from "./commands";
+import type { CommandExecutor } from "./execution/command-executor";
 
 /**
  * Creates an agent-bound loader that refuses names outside its skill selection.
@@ -45,11 +46,14 @@ export function createLoadSkillTool(
 }
 
 /** Builds the shared catalogue; graph construction binds load_skill to its own selection. */
-export function createLocalTools(skills: readonly SkillMeta[]): StructuredToolInterface[] {
+export function createLocalTools(
+  skills: readonly SkillMeta[],
+  executor: CommandExecutor,
+): StructuredToolInterface[] {
   return [
     createLoadSkillTool(skills),
     ...memoryTools,
-    ...bashTools,
+    createCommandTool(executor),
     ...(settings.SCHEDULER_ENABLED ? schedulerTools : []),
   ];
 }

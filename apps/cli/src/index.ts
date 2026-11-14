@@ -58,7 +58,9 @@ async function printEvent(event: TurnEvent): Promise<void> {
       console.log(`  🧠 memory: ${event.name}(${JSON.stringify(event.args)})`);
       break;
     case "tool_call":
-      console.log(`  🔧 tool called: ${event.name}(${JSON.stringify(event.args)})`);
+      console.log(
+        `  🔧 tool called: ${event.name}${event.target ? ` [${event.target}]` : ""}(${JSON.stringify(event.args)})`,
+      );
       break;
     case "tool_result":
       console.log(
@@ -124,9 +126,9 @@ async function main() {
   // declines whatever was left pending.
   const askAtTerminal =
     (signal: AbortSignal): Decide =>
-    async ({ command, execution }) => {
+    async ({ command, execution, target }) => {
       const answer = await rl.question(
-        ` ▶️ [${delegationReporter.owner(execution.taskId, execution.agentId)}] Execute command: "${command}"? [y/N]: `,
+        ` ▶️ [${delegationReporter.owner(execution.taskId, execution.agentId)}] Execute ${target} command: "${command}"? [y/N]: `,
         { signal },
       );
       return ["y", "yes"].includes(answer.trim().toLowerCase());

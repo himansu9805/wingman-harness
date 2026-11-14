@@ -45,7 +45,12 @@ export function applyEvent(state: Activity, event: ThreadEvent): Activity {
 /** Tool IDs, rather than names or run IDs, connect results across approval resumes. */
 export function toolsWithResults(calls: ToolCall[], events: ThreadEvent[]): ToolCall[] {
   return calls.map((call) => {
-    if (call.result) return call;
+    const request = events.findLast(
+      (event) => event.type === "tool_call" && event.toolCallId === call.id,
+    );
+    const withTarget =
+      request?.type === "tool_call" && request.target ? { ...call, target: request.target } : call;
+    if (call.result) return withTarget;
     const calledAt = events.findLastIndex(
       (event) =>
         "toolCallId" in event && event.toolCallId === call.id && event.type !== "tool_result",
@@ -55,8 +60,8 @@ export function toolsWithResults(calls: ToolCall[], events: ThreadEvent[]): Tool
         index > calledAt && event.type === "tool_result" && event.toolCallId === call.id,
     );
     return result?.type === "tool_result"
-      ? { ...call, result: { output: result.output, truncated: result.truncated } }
-      : call;
+      ? { ...withTarget, result: { output: result.output, truncated: result.truncated } }
+      : withTarget;
   });
 }
 

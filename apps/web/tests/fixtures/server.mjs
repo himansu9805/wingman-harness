@@ -1,3 +1,4 @@
+import threadWebSocket from "../../../server/dist/threads/thread-events-websocket.js";
 import titlesModule from "../../../server/dist/threads/thread-titles.service.js";
 import titleGeneratorModule from "../../../server/dist/threads/title-generator.js";
 // Disposable local browser-test server: real Nest handlers and approval graph,
@@ -59,7 +60,7 @@ const plan = {
     },
     {
       key: "verify",
-      agentId: "operator",
+      agentId: "coder",
       objective: "Verify the findings",
       context: "Use fictional demo checks only",
       expectedResult: "Verification summary",
@@ -69,7 +70,7 @@ const plan = {
 };
 const fixture = await createDelegationRuntime({
   plan,
-  operatorTools: [demoCheck],
+  coderTools: [demoCheck],
   summarize: (result) => {
     const plan = JSON.parse(result.text);
     return plan.status === "completed"
@@ -214,10 +215,17 @@ Module({
 const app = await NestFactory.create(BrowserTestModule, { logger: false });
 app.enableCors({
   origin: "http://127.0.0.1:5173",
-  allowedHeaders: ["Authorization", "Content-Type", "Last-Event-ID"],
+  allowedHeaders: ["Authorization", "Content-Type"],
 });
 app.useGlobalGuards(new guardModule.TokenGuard());
 app.enableShutdownHooks();
 const port = Number(process.env.WINGMAN_TEST_API_PORT ?? 3001);
+await app.init();
+threadWebSocket.attachThreadEventsWebSocket(
+  app.getHttpServer(),
+  app.get(serviceModule.AgentService),
+  process.env.WINGMAN_API_TOKEN,
+  "http://localhost:5173",
+);
 await app.listen(port, "127.0.0.1");
 console.log(`Disposable test API: http://127.0.0.1:${port}; token: web-development-test-only`);

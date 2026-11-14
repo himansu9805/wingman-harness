@@ -95,7 +95,7 @@ test("researcher selects only shared OpenSERP tools without shell, memory or nes
 
 test("orchestrator explicitly declares every built-in specialist before module assembly", () => {
   const definition = createOrchestratorAgentDefinition();
-  assert.deepEqual(definition.delegation.agents, ["analyst", "operator", "researcher"]);
+  assert.deepEqual(definition.delegation.agents, ["analyst", "coder", "researcher"]);
   const assembled = assembleAgentModules(builtinAgentModules(false));
   assert.deepEqual(assembled.definitions[0].delegation.agents, definition.delegation.agents);
 });

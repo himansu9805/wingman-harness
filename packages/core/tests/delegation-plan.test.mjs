@@ -100,7 +100,7 @@ test("a coordinator runs independent analysts together and sends scoped prerequi
   let active = 0;
   let maximum = 0;
   const plan = {
-    tasks: [task("a"), task("b"), { ...task("review", ["a", "b"]), agentId: "operator" }],
+    tasks: [task("a"), task("b"), { ...task("review", ["a", "b"]), agentId: "coder" }],
   };
   plan.tasks.forEach((item) => {
     item.objective = item.key;
@@ -248,7 +248,7 @@ test("multiple plan approvals pause the parent in sequence and completed prerequ
   const plan = {
     tasks: [
       task("analysis"),
-      { ...task("commands", ["analysis"]), agentId: "operator" },
+      { ...task("commands", ["analysis"]), agentId: "coder" },
       task("summary", ["commands"]),
     ],
   };
@@ -282,7 +282,7 @@ test("multiple plan approvals pause the parent in sequence and completed prerequ
     let result = await startTurn(f.agent, "delegate", "approvals", options());
     for (let i = 0; i < 2; i++) {
       assert.equal(result.kind, "paused");
-      assert.equal(result.approvals[0].execution.agentId, "operator");
+      assert.equal(result.approvals[0].execution.agentId, "coder");
       result = await resumeTurn(
         f.agent,
         { [result.approvals[0].id]: false },
@@ -322,10 +322,10 @@ test("tool-enabled workers have exclusive runtime access across conversations", 
     },
     { name: "action", description: "Mutating test action", schema: z.object({}) },
   );
-  const plan = { tasks: [{ ...task("act"), agentId: "operator" }] };
+  const plan = { tasks: [{ ...task("act"), agentId: "coder" }] };
   const f = await createDelegationRuntime({
     plan,
-    operatorTools: [action],
+    coderTools: [action],
     child: async (messages) =>
       messages.some(ToolMessage.isInstance)
         ? "done"
@@ -348,7 +348,7 @@ test("tool-enabled workers have exclusive runtime access across conversations", 
 });
 
 test("new user messages cancel the whole paused plan and block its unstarted dependants", async () => {
-  const plan = { tasks: [{ ...task("command"), agentId: "operator" }, task("next", ["command"])] };
+  const plan = { tasks: [{ ...task("command"), agentId: "coder" }, task("next", ["command"])] };
   const f = await createDelegationRuntime({
     plan,
     child: async () => [
@@ -380,7 +380,7 @@ test("new user messages cancel the whole paused plan and block its unstarted dep
 });
 
 test("plan cancellation intent survives interrupted cleanup and prevents further dispatch", async () => {
-  const plan = { tasks: [{ ...task("command"), agentId: "operator" }, task("next", ["command"])] };
+  const plan = { tasks: [{ ...task("command"), agentId: "coder" }, task("next", ["command"])] };
   const f = await createDelegationRuntime({
     plan,
     child: async () => [

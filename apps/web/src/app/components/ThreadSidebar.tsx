@@ -6,7 +6,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
-import { MessageSquare, Trash2, RotateCcw, SquarePen, Clock } from "lucide-react";
+import { MessageSquare, Trash2, RotateCcw, SquarePen, Clock, Box } from "lucide-react";
 import * as stylex from "@stylexjs/stylex";
 import wingmanLogo from "../../../../../assets/branding/wingman-logo.png";
 import type { Wingman } from "../../features/chat/model/useWingman";
@@ -18,6 +18,8 @@ export function ThreadSidebar({
   onDelete,
   scheduled,
   onScheduled,
+  sandbox,
+  onSandbox,
   onNew,
   onSelect,
 }: {
@@ -25,6 +27,8 @@ export function ThreadSidebar({
   onDelete: (thread: Thread) => void;
   scheduled: boolean;
   onScheduled: () => void;
+  sandbox: boolean;
+  onSandbox: () => void;
   onNew: () => void;
   onSelect: (id: string) => void;
 }) {
@@ -56,6 +60,13 @@ export function ThreadSidebar({
         isSelected={scheduled}
         onClick={onScheduled}
       />
+      <SideNavItem
+        key="sandbox"
+        label="Sandbox"
+        icon={Box}
+        isSelected={sandbox}
+        onClick={onSandbox}
+      />
       <SideNavSection
         title="Conversations"
         endContent={
@@ -72,7 +83,7 @@ export function ThreadSidebar({
             key={thread.id}
             thread={thread}
             model={model}
-            scheduled={scheduled}
+            scheduled={scheduled || sandbox}
             onDelete={onDelete}
             onSelect={onSelect}
           />

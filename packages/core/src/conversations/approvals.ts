@@ -10,6 +10,7 @@ export const ApprovalExecutionSchema = z.object({
 export const CommandApprovalSchema = z.object({
   kind: z.literal("bash_approval"),
   command: z.string(),
+  target: z.enum(["host", "sandbox"]).default("host"),
   execution: ApprovalExecutionSchema,
 });
 export type CommandApproval = z.infer<typeof CommandApprovalSchema>;
@@ -29,10 +30,15 @@ const PayloadSchema = z.union([CommandApprovalSchema, DelegatedApprovalSchema]);
 export type NativeApproval = Interrupt<ApprovalPayload>;
 
 /** Ownership is injected from graph configuration, never supplied by model arguments. */
-export function commandApproval(command: string, runtime: ToolRuntime): CommandApproval {
+export function commandApproval(
+  command: string,
+  runtime: ToolRuntime,
+  target: "host" | "sandbox" = "sandbox",
+): CommandApproval {
   return CommandApprovalSchema.parse({
     kind: "bash_approval",
     command,
+    target,
     execution: {
       agentId: runtime.config.configurable?.agent_id,
       taskId: runtime.config.configurable?.delegated_task_id ?? null,
@@ -47,7 +53,7 @@ export function pendingApprovals(interrupts: readonly NativeApproval[]): Pending
     if (!item.id) throw new Error("Approval interrupt has no persisted ID");
     const value = PayloadSchema.parse(item.value);
     return value.kind === "bash_approval"
-      ? [{ id: item.id, command: value.command, execution: value.execution }]
+      ? [{ id: item.id, command: value.command, target: value.target, execution: value.execution }]
       : value.approvals.map((approval) => ({ ...approval, id: `${item.id}:${approval.id}` }));
   });
 }

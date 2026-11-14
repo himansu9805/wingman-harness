@@ -18,6 +18,9 @@ class Settings {
   readonly GRAPH_DB_PATH: string;
   readonly SCHEDULER_ENABLED: boolean;
   readonly POSTGRES_CONNECTION_STRING: string;
+  readonly SANDBOX_DOCKERFILE_DIR: string;
+  readonly SANDBOX_IDLE_TIMEOUT_HOURS: number;
+  readonly SANDBOX_SHUTDOWN_ACTION: "retain" | "stop";
 
   readonly DECISIONS_MODEL_BASE_URL: string;
   readonly DECISIONS_MODEL_NAME: string;
@@ -33,6 +36,8 @@ class Settings {
     const {
       SCHEDULER_ENABLED,
       POSTGRES_CONNECTION_STRING = "",
+      SANDBOX_IDLE_TIMEOUT_HOURS = "24",
+      SANDBOX_SHUTDOWN_ACTION = "retain",
       DECISIONS_MODEL_BASE_URL = "",
       DECISIONS_MODEL_NAME = "",
       DECISIONS_MODEL_API_KEY = "",
@@ -62,6 +67,16 @@ class Settings {
       throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
     }
 
+    const idleHours = Number(SANDBOX_IDLE_TIMEOUT_HOURS);
+    if (!Number.isFinite(idleHours) || idleHours < 1 / 60) {
+      throw new Error("SANDBOX_IDLE_TIMEOUT_HOURS must be at least one minute (1/60 hour)");
+    }
+    if (SANDBOX_SHUTDOWN_ACTION !== "retain" && SANDBOX_SHUTDOWN_ACTION !== "stop") {
+      throw new Error("SANDBOX_SHUTDOWN_ACTION must be retain or stop");
+    }
+    this.SANDBOX_IDLE_TIMEOUT_HOURS = idleHours;
+    this.SANDBOX_SHUTDOWN_ACTION = SANDBOX_SHUTDOWN_ACTION;
+    this.SANDBOX_DOCKERFILE_DIR = join(HOME, "packages/core/sandbox");
     this.SKILLS_DIR = join(HOME, "skills");
     this.MCP_CONFIG_PATH = join(HOME, "mcp.config.json");
     this.GRAPH_DB_PATH = join(HOME, "memory.lbug");

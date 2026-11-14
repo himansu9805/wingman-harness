@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import type { CommandExecutor } from "./execution/command-executor";
 import { tool, type ToolRuntime } from "@langchain/core/tools";
 import { commandApproval, type CommandApproval } from "../conversations/approvals";
 export type { CommandApproval } from "../conversations/approvals";
@@ -7,13 +6,10 @@ import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
 import { parse } from "shell-quote";
 
-const execFilePromise = promisify(execFile);
-
-export type Verdict = "allow" | "deny" | "ask";
+export type Verdict = "allow" | "ask";
 
 const RULESET = {
   allow: ["docker ps", "docker ps *", "git status", "git log *", "ls *", "pwd"],
-  deny: ["rm *", "sudo *", "shutdown *", "reboot *", "kill *", "killall *"],
 };
 
 /** Catches shell constructs that shell-quote otherwise preserves as text. */
@@ -81,88 +77,60 @@ function matches(argv: string[], pattern: string): boolean {
  * if the user should be prompted for confirmation.
  */
 export function checkCommand(argv: string[]): Verdict {
-  if (RULESET.deny.some((p) => matches(argv, p))) return "deny";
-  if (RULESET.allow.some((p) => matches(argv, p))) return "allow";
+  if (RULESET.allow.some((pattern) => matches(argv, pattern))) return "allow";
   return "ask";
 }
 
-const executeBashCommand = tool(
-  async ({ command }, runtime: ToolRuntime) => {
-    const argv = toArgv(command);
-    if (!argv) {
-      return JSON.stringify({
-        error:
-          "Rejected: shell syntax (pipes, ;, &&, $(), redirects, wildcards) " +
-          "is not supported. Run each command separately, e.g. 'docker ps' " +
-          "then 'docker stats --no-stream', and combine the results yourself.",
-      });
-    }
-    const verdict = checkCommand(argv);
-    if (verdict === "deny") {
-      return JSON.stringify({
-        error:
-          "Blocked: this command is not allowed on this machine. Don't retry " +
-          "it or a variant. Tell the user it is blocked.",
-      });
-    }
-    if (verdict === "ask") {
-      // Pauses the run here. On resume the tool reruns from the top, and
-      // interrupt() returns the value passed to Command({ resume }).
-      const approved = interrupt<CommandApproval, boolean>(commandApproval(command, runtime));
-      if (!approved) {
-        return JSON.stringify({
-          error:
-            "Declined: the user chose not to run this command. Don't retry " +
-            "it or a variant on your own. Wait for the user's next instruction. " +
-            "If the user explicitly asks to run it again, call this tool for " +
-            "fresh approval. The retry request itself is not approval.",
-        });
+/** Bind a command tool to an executor chosen by trusted application configuration. */
+export function createCommandTool(executor: CommandExecutor) {
+  if (!executor || executor.target !== "sandbox" || typeof executor.executeShell !== "function") {
+    throw new Error("Sandbox execution requires a persistent shell executor");
+  }
+  return tool(
+    async ({ command }, runtime: ToolRuntime) => {
+      const argv = toArgv(command);
+      if (!command.trim()) return JSON.stringify({ error: "Rejected: command must not be empty." });
+      const safe = argv && /^[\w./ \t-]+$/.test(command) && checkCommand(argv) === "allow";
+      const verdict = safe ? "allow" : "ask";
+      if (verdict === "ask") {
+        // Pauses the run here. On resume the tool reruns from the top, and
+        // interrupt() returns the value passed to Command({ resume }).
+        const approved = interrupt<CommandApproval, boolean>(
+          commandApproval(command, runtime, executor.target),
+        );
+        if (!approved) {
+          return JSON.stringify({
+            error:
+              "Declined: the user chose not to run this command. Don't retry " +
+              "it or a variant on your own. Wait for the user's next instruction. " +
+              "If the user explicitly asks to run it again, call this tool for " +
+              "fresh approval. The retry request itself is not approval.",
+          });
+        }
       }
-    }
-    const [file, ...args] = argv;
-    try {
-      // Execute the bash command (timeout capped at 30 seconds)
-      const { stdout, stderr } = await execFilePromise(file, args, {
-        timeout: 30000,
+      const configuredThreadId = runtime.config.configurable?.conversation_id;
+      const context = {
+        threadId: typeof configuredThreadId === "string" ? configuredThreadId : undefined,
         signal: runtime.config.signal,
-      });
-      return JSON.stringify({
-        stdout: stdout || "",
-        stderr: stderr || "",
-        exit_code: 0,
-      });
-    } catch (error) {
-      const execError = error as NodeJS.ErrnoException & {
-        stdout?: string;
-        stderr?: string;
-        code?: number | string;
+        target: executor.target,
       };
-
-      return JSON.stringify({
-        stdout: execError.stdout || "",
-        stderr: execError.stderr || "",
-        exit_code: typeof execError.code === "number" ? execError.code : 1,
-        error: execError.message || "Unknown error",
-      });
-    }
-  },
-  {
-    name: "exec_bash_command",
-    description:
-      "Runs one command on the user's computer and returns its stdout, " +
-      "stderr and exit_code. Use it to inspect the machine: containers, " +
-      "files, processes, git, disk usage. Call it directly: it asks the user " +
-      "for approval itself when needed, so don't ask permission in your reply " +
-      "first. Only one plain command per call: pipes, ;, &&, $(), redirects " +
-      "and wildcards are rejected. Some commands are blocked entirely.",
-    schema: z.object({
-      command: z
-        .string()
-        .describe(
-          "One plain command with its arguments. Right: 'docker ps', 'ls -la /tmp', 'git status'. Wrong (rejected): 'ps aux | grep postgres', 'cd src && ls'.",
-        ),
-    }),
-  },
-);
-
-export const bashTools = [executeBashCommand];
+      const result = await executor.executeShell(command, context);
+      return JSON.stringify(result);
+    },
+    {
+      name: "exec_bash_command",
+      description:
+        "Runs a command in the isolated Linux sandbox and returns stdout, stderr and exit_code. " +
+        "Call it directly; it requests approval when needed. Commands share a persistent PTY shell; " +
+        "stdout and stderr are combined, and background output may appear during later commands. " +
+        "Shell syntax, including heredocs and redirection, requires approval for the complete script.",
+      schema: z.object({
+        command: z
+          .string()
+          .describe(
+            "A sandbox command or shell script. Shell syntax requires approval for the entire script.",
+          ),
+      }),
+    },
+  );
+}

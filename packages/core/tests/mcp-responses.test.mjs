@@ -134,8 +134,8 @@ test("a worker can use an alternative after a returned MCP error", async () => {
       : { content: [{ type: "text", text: "Verified alternative source" }] },
   );
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "Research", context: "" },
-    operatorTools: [selected],
+    args: { agentId: "coder", objective: "Research", context: "" },
+    coderTools: [selected],
     child: async (messages) => {
       const results = messages.filter(ToolMessage.isInstance);
       if (results.length === 2) return results.at(-1).text;
@@ -169,8 +169,8 @@ test("known pre-dispatch argument validation errors do not become uncertain exec
     return { content: [{ type: "text", text: "Page inspected" }] };
   });
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "Inspect page", context: "" },
-    operatorTools: [selected],
+    args: { agentId: "coder", objective: "Inspect page", context: "" },
+    coderTools: [selected],
     child: async (messages) => {
       const results = messages.filter(ToolMessage.isInstance);
       if (results.length === 2) return results.at(-1).text;
@@ -202,8 +202,8 @@ test("model failure after a successful tool retains observations for the coordin
     content: [{ type: "text", text: "Observed page at https://example.invalid: no match records" }],
   }));
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "Research", context: "" },
-    operatorTools: [selected],
+    args: { agentId: "coder", objective: "Research", context: "" },
+    coderTools: [selected],
     child: async (messages) => {
       if (messages.some(ToolMessage.isInstance)) throw new Error("private provider failure");
       return [
@@ -238,8 +238,8 @@ test("lost transport preserves earlier evidence without replaying the uncertain 
     return { content: [{ type: "text", text: "First page was inspected" }] };
   });
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "Research", context: "" },
-    operatorTools: [selected],
+    args: { agentId: "coder", objective: "Research", context: "" },
+    coderTools: [selected],
     child: async (messages) => [
       {
         type: "tool_call",
@@ -278,8 +278,8 @@ test("oversized protocol artifacts preserve readable text within the durable res
     { name: "read_source", description: "Read fixture source", schema: z.object({}) },
   );
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "Read source", context: "" },
-    operatorTools: [selected],
+    args: { agentId: "coder", objective: "Read source", context: "" },
+    coderTools: [selected],
     child: async (messages) =>
       messages.some(ToolMessage.isInstance)
         ? "Read source"

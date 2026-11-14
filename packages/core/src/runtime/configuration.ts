@@ -4,6 +4,7 @@ import type { modelRouter } from "../integrations/models/router";
 import type { AgentDefinition } from "../agents/definition";
 import type { SkillMeta } from "../skills/catalogue";
 import type { ExecutionResources } from "../agents/module";
+import type { SandboxMonitor } from "../capabilities/execution/sandbox/sandbox-monitor";
 
 /** Shared models and routing policy; fixed-model agents omit the router. */
 export interface AgentModels {
@@ -14,6 +15,7 @@ export interface AgentModels {
 
 /** Trusted application assembly, separate from user messages and task input. */
 export interface AgentConfiguration {
+  readonly sandboxMonitor?: SandboxMonitor;
   /** Maximum simultaneous delegated workers across this runtime. */
   readonly delegationConcurrency?: number;
   readonly definitions: readonly AgentDefinition[];
@@ -38,13 +40,28 @@ export async function loadAgentConfiguration(
   const { builtinAgentModules } = await import("../agents/builtins/index");
   const { assembleAgentModules } = await import("../agents/module");
   const { settings } = await import("../settings");
-  return {
-    ...assembleAgentModules(builtinAgentModules(settings.SCHEDULER_ENABLED)),
-    globalTools: createLocalTools(skills),
-    models: {
-      fast: fastModel,
-      powerful: strongModel,
-      routingMiddleware: modelRouter,
+  const modules = assembleAgentModules(builtinAgentModules(settings.SCHEDULER_ENABLED));
+  const { DockerCommandExecutor } =
+    await import("../capabilities/execution/sandbox/docker-command-executor");
+  const executor = new DockerCommandExecutor(
+    settings.POSTGRES_CONNECTION_STRING,
+    settings.SANDBOX_DOCKERFILE_DIR,
+    {
+      idleTimeoutHours: settings.SANDBOX_IDLE_TIMEOUT_HOURS,
+      shutdownAction: settings.SANDBOX_SHUTDOWN_ACTION,
     },
-  };
+  );
+  try {
+    await executor.init();
+    return {
+      ...modules,
+      sandboxMonitor: executor,
+      globalTools: createLocalTools(skills, executor),
+      executionResources: [...modules.executionResources, executor],
+      models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
+    };
+  } catch (error) {
+    await executor.close();
+    throw error;
+  }
 }

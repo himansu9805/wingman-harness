@@ -1,6 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 // Adapted from Astryx's ai-chat page template: Layout > chat column > ChatLayout.
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Layout, LayoutContent, LayoutHeader, HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
@@ -16,15 +16,25 @@ import { removeLegacyConnection } from "../features/chat/model/storage";
 import { defaultConnection } from "../shared/api/connection";
 import type { Thread } from "../shared/contracts/types";
 
+const SandboxView = lazy(() =>
+  import("../features/sandboxes/components/SandboxView").then((module) => ({
+    default: module.SandboxView,
+  })),
+);
+
 /** Compose chat and scheduling views, conversation navigation, and deletion confirmation. */
 export default function App() {
-  const [view, setView] = useState<"chat" | "scheduled">(() =>
-    window.location.hash === "#scheduled" ? "scheduled" : "chat",
+  const [view, setView] = useState<"chat" | "scheduled" | "sandbox">(() =>
+    window.location.hash === "#scheduled"
+      ? "scheduled"
+      : window.location.hash === "#sandbox"
+        ? "sandbox"
+        : "chat",
   );
   useEffect(() => {
     const url = new URL(window.location.href);
-    if (view === "scheduled") url.hash = "scheduled";
-    else if (url.hash === "#scheduled") url.hash = "";
+    if (view === "scheduled" || view === "sandbox") url.hash = view;
+    else if (url.hash === "#scheduled" || url.hash === "#sandbox") url.hash = "";
     window.history.replaceState(window.history.state, "", url);
   }, [view]);
   const [deleting, setDeleting] = useState<Thread | null>(null);
@@ -52,6 +62,8 @@ export default function App() {
             onDelete={setDeleting}
             scheduled={view === "scheduled"}
             onScheduled={() => setView("scheduled")}
+            sandbox={view === "sandbox"}
+            onSandbox={() => setView("sandbox")}
             onNew={() => {
               setView("chat");
               model.create();
@@ -89,7 +101,7 @@ export default function App() {
             ) : undefined
           }
           content={
-            <LayoutContent padding={0} isScrollable={view === "scheduled"}>
+            <LayoutContent padding={0} isScrollable={view !== "chat"}>
               <VStack height="100%" width="100%">
                 {model.error && (
                   <Banner
@@ -120,6 +132,10 @@ export default function App() {
                       model.select(id);
                     }}
                   />
+                ) : view === "sandbox" ? (
+                  <Suspense fallback={<Text type="supporting">Loading sandboxes…</Text>}>
+                    <SandboxView threads={model.threads} />
+                  </Suspense>
                 ) : (
                   <Conversation model={model} />
                 )}

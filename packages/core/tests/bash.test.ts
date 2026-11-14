@@ -36,6 +36,7 @@ describe("toArgv", () => {
     "pwd || ls",
     "pwd & ls",
     "echo hello > output.txt",
+    "cat <<'EOF' > server.py\nprint('hello')\nEOF",
     "echo hello >> output.txt",
     "cat < input.txt",
     "cat 2> errors.txt",
@@ -54,6 +55,11 @@ describe("toArgv", () => {
 });
 
 describe("checkCommand", () => {
+  it("requires approval for potentially destructive commands", () => {
+    for (const command of ["rm", "kill", "sudo", "shutdown"]) {
+      assert.equal(checkCommand([command, "target"]), "ask");
+    }
+  });
   for (const argv of [
     ["pwd"],
     ["git", "status"],
@@ -67,17 +73,6 @@ describe("checkCommand", () => {
     it(`allows ${JSON.stringify(argv)}, including zero or more trailing-star arguments`, () => {
       assert.equal(checkCommand(argv), "allow");
     });
-  }
-
-  // The fixed ruleset has no overlapping allow/deny patterns; exercise every
-  // deny prefix without changing production rules to manufacture an overlap.
-  for (const executable of ["rm", "sudo", "shutdown", "reboot", "kill", "killall"]) {
-    for (const args of [[], ["target"], ["-f", "target"]]) {
-      const argv = [executable, ...args];
-      it(`denies ${JSON.stringify(argv)}`, () => {
-        assert.equal(checkCommand(argv), "deny");
-      });
-    }
   }
 
   for (const argv of [

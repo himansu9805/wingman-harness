@@ -52,6 +52,7 @@ export function taskCalls(taskId: string | null, events: ThreadEvent[]): ToolCal
       calls.set(activity.toolCallId, {
         id: activity.toolCallId,
         name: activity.type === "skill" ? "load_skill" : activity.name,
+        ...(activity.type === "tool_call" && activity.target ? { target: activity.target } : {}),
         args:
           args && typeof args === "object" && !Array.isArray(args)
             ? (args as Record<string, unknown>)

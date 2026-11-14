@@ -1,3 +1,4 @@
+import { sandboxExecutor } from "../../../tests/fixtures/sandbox-executor.mjs";
 import { MemoryDelegationStore } from "../src/delegation/storage/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -11,7 +12,7 @@ import { Agent } from "../src/agents/agent.ts";
 import { CoreRuntime } from "../src/runtime/runtime.ts";
 import {
   analystAgentDefinition,
-  operatorAgentDefinition,
+  coderAgentDefinition,
   researcherAgentDefinition,
   createOrchestratorAgentDefinition,
 } from "../src/agents/builtins/index.ts";
@@ -39,6 +40,9 @@ class RecordingModel extends BaseChatModel {
         .map((message) => message.text)
         .join("\n"),
       tools: this.boundTools.map((tool) => tool.name),
+      toolDescriptions: Object.fromEntries(
+        this.boundTools.map((tool) => [tool.name, tool.description]),
+      ),
       messages,
     });
     const message = this.respond ? await this.respond(messages) : new AIMessage(this.label);
@@ -54,8 +58,53 @@ const role = (id, capabilities = {}, model = "powerful") => ({
   instructions: `Instructions for ${id}.`,
   capabilities: { ...analystAgentDefinition.capabilities, ...capabilities },
 });
+
 const simpleTool = (name) =>
   tool(async () => name, { name, description: name, schema: z.object({}) });
+
+test("sandbox coders advertise approved shell scripts for file creation", async () => {
+  const executor = {
+    target: "sandbox",
+    async executeShell() {
+      throw new Error("not used");
+    },
+  };
+  const { runtime, trace } = await fixture({
+    definitions: [
+      createOrchestratorAgentDefinition(),
+      analystAgentDefinition,
+      coderAgentDefinition,
+      researcherAgentDefinition,
+    ],
+    globalTools: createLocalTools([], executor),
+  });
+  try {
+    await startTurn(
+      await Agent.create(runtime),
+      "Create a Python script",
+      "sandbox-planner",
+      options(),
+    );
+    const planner = trace.models.at(-1);
+    assert.match(planner.prompt, /showing code in a reply is not the same as creating the file/i);
+    assert.match(
+      planner.toolDescriptions.delegate_task,
+      /coder:.*sandbox shell scripts, heredocs and redirection.*approval/i,
+    );
+    await startTurn(
+      await Agent.create(runtime, "coder"),
+      "Create a Python script",
+      "sandbox-coder",
+      options(),
+    );
+    assert.match(trace.models.at(-1).prompt, /heredocs, pipes and redirection are supported/i);
+    assert.match(trace.models.at(-1).prompt, /save it in the sandbox and verify/i);
+    assert.match(trace.models.at(-1).prompt, /files are not the user's host workspace/i);
+    assert.match(trace.models.at(-1).prompt, /run appropriate checks/i);
+  } finally {
+    await runtime.close();
+  }
+});
 
 async function fixture({
   definitions,
@@ -323,16 +372,21 @@ test("empty installed skill catalogue does not expose load_skill", async () => {
   }
 });
 
-test("operator graph preserves production shell approval and resume", async () => {
+test("coder graph preserves production shell approval and resume", async () => {
   const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('phase2b')")}`;
   const { runtime, trace } = await fixture({
     definitions: [
       createOrchestratorAgentDefinition(),
       analystAgentDefinition,
-      operatorAgentDefinition,
+      coderAgentDefinition,
       researcherAgentDefinition,
     ],
-    globalTools: createLocalTools([]),
+    globalTools: createLocalTools([], {
+      target: "sandbox",
+      async executeShell() {
+        return { stdout: "phase2b", stderr: "", exit_code: 0 };
+      },
+    }),
     respond(messages) {
       const result = messages.filter(ToolMessage.isInstance).at(-1);
       return result
@@ -351,7 +405,7 @@ test("operator graph preserves production shell approval and resume", async () =
     },
   });
   try {
-    const agent = await Agent.create(runtime, "operator");
+    const agent = await Agent.create(runtime, "coder");
     const paused = await startTurn(agent, "run harmless command", "shell-thread", options());
     assert.equal(paused.kind, "paused");
     const answers = Object.fromEntries(paused.approvals.map((item) => [item.id, true]));

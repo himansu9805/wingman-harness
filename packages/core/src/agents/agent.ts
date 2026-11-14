@@ -74,9 +74,21 @@ export class Agent {
     private readonly runtime: CoreRuntime,
   ) {}
 
+  /** Trusted target used to validate pending command approvals on resume. */
+
+  /** Read-only sandbox metadata and output, when sandbox execution is enabled. */
+  get sandboxMonitor() {
+    return this.runtime.sandboxMonitor;
+  }
+
   /** Cleans internal child checkpoints without creating or deleting sidebar chats. */
   deleteDelegatedState(conversationId: string): Promise<void> {
     return this.runtime.plans.deleteConversation(conversationId);
+  }
+
+  /** Releases resources owned by the conversation after its workers are stopped. */
+  releaseConversation(conversationId: string): Promise<void> {
+    return this.runtime.releaseExecution(conversationId);
   }
 
   /** Cancels unfinished workers before abandoning a parent turn. */

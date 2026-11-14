@@ -24,6 +24,9 @@ runtime:
         test("200 with a list", () => {
           expect(res.status).to.equal(200);
           expect(res.getBody()).to.be.an("array");
+          for (const approval of res.getBody()) {
+            expect(["host", "sandbox"]).to.include(approval.target);
+          }
         });
 
 settings:
@@ -34,7 +37,9 @@ settings:
   forwardAuthorizationHeader: true
 
 docs: |-
-  Review the complete response before resuming. execution identifies agentId,
+  Review the complete response before resuming. target identifies host or sandbox;
+  approval applies to that target, and changing targets requires a fresh approval.
+  execution identifies agentId,
   taskId and toolCallId; match taskId to a delegation_plan snapshot for its key.
   This request captures the current exact batch as approvalAnswers and denialAnswers.
   Capturing variables does not resume or execute commands. Approve/Deny are separate POSTs.

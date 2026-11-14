@@ -122,6 +122,7 @@ export type DelegationEvent = z.infer<typeof DelegationEventSchema>;
 const ActivitySchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("tool_call"),
+    target: z.enum(["host", "sandbox"]).optional(),
     name: z.string(),
     args: z.unknown(),
     toolCallId: z.string().optional(),

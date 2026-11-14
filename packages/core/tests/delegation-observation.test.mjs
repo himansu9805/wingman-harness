@@ -66,7 +66,7 @@ test("complete plan snapshots contain ordered tasks, bounded results and per-chi
 
 test("approval resume snapshots reuse task identities and prior usage while exposing current wait time", async () => {
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "inspect", context: "" },
+    args: { agentId: "coder", objective: "inspect", context: "" },
     child: async (messages) =>
       messages.some(ToolMessage.isInstance)
         ? "declined"

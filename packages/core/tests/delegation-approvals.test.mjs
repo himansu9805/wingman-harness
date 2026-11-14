@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { ToolMessage } from "@langchain/core/messages";
 import { createDelegationRuntime } from "../../../tests/fixtures/delegation-runtime.mjs";
 import {
@@ -16,7 +13,7 @@ import { Agent } from "../src/agents/agent.ts";
 import { DelegationRunner } from "../src/delegation/runner.ts";
 
 const options = () => ({ signal: AbortSignal.timeout(10000) });
-const args = { agentId: "operator", objective: "Run approved commands", context: "" };
+const args = { agentId: "coder", objective: "Run approved commands", context: "" };
 const child = (commands) => async (messages) => {
   const results = messages.filter(ToolMessage.isInstance);
   return results.length
@@ -31,14 +28,16 @@ const child = (commands) => async (messages) => {
 
 for (const approve of [true, false])
   test(`delegated parallel commands expose owners and ${approve ? "execute" : "decline"} through parent resume`, async (t) => {
-    const directory = await mkdtemp(join(tmpdir(), "wingman-worker-"));
-    t.after(() => rm(directory, { recursive: true, force: true }));
-    const files = [join(directory, "first"), join(directory, "second")];
-    const commands = files.map(
-      (file) =>
-        `${JSON.stringify(process.execPath)} -e ${JSON.stringify(`require('node:fs').appendFileSync(${JSON.stringify(file)}, 'once')`)}`,
-    );
-    const f = await createDelegationRuntime({ args, child: child(commands) });
+    const commands = ["write first", "write second"];
+    const calls = [];
+    const commandExecutor = {
+      target: "sandbox",
+      async executeShell(command) {
+        calls.push(command);
+        return { stdout: "once", stderr: "", exit_code: 0 };
+      },
+    };
+    const f = await createDelegationRuntime({ args, child: child(commands), commandExecutor });
     try {
       const events = [];
       const paused = await startTurn(f.agent, "delegate", "chat", {
@@ -55,13 +54,13 @@ for (const approve of [true, false])
       assert.equal(task.modelCalls, 1);
       assert.ok(
         pending.every(
-          (item) => item.execution.agentId === "operator" && item.execution.taskId === task.taskId,
+          (item) => item.execution.agentId === "coder" && item.execution.taskId === task.taskId,
         ),
       );
       assert.ok(
         events.some((event) => event.type === "agent_activity" && event.event.type === "tool_call"),
       );
-      for (const file of files) await assert.rejects(readFile(file), { code: "ENOENT" });
+      assert.deepEqual(calls, []);
       await assert.rejects(
         resumeTurn(f.agent, { [pending[0].id]: approve }, "chat", options()),
         /every pending/,
@@ -74,10 +73,7 @@ for (const approve of [true, false])
       );
       assert.equal(result.kind, "done");
       if (!approve) assert.match(result.text, /Declined/);
-      for (const file of files) {
-        if (approve) assert.equal(await readFile(file, "utf8"), "once");
-        else await assert.rejects(readFile(file), { code: "ENOENT" });
-      }
+      assert.deepEqual([...calls].sort(), approve ? [...commands].sort() : []);
       const [completed] = await f.store.listConversation("chat");
       assert.equal(completed.status, "completed");
       assert.equal(completed.modelCalls, 2);
@@ -104,7 +100,7 @@ for (const approve of [true, false])
       assert.ok(checkpoint);
       await f.agent.app.graph.updateState(checkpoint.config, {}, "model_request");
       await runTurn(f.agent, null, "chat", options());
-      if (approve) for (const file of files) assert.equal(await readFile(file, "utf8"), "once");
+      assert.deepEqual([...calls].sort(), approve ? [...commands].sort() : []);
     } finally {
       await f.runtime.close();
     }
@@ -249,11 +245,16 @@ test("expired tasks with an uncertain action are never restarted or automaticall
 });
 
 test("known tool results are reused when a worker checkpoint is replayed before task completion", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "wingman-ledger-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const file = join(directory, "calls");
-  const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(`require('node:fs').appendFileSync(${JSON.stringify(file)}, 'once')`)}`;
-  const f = await createDelegationRuntime({ args, child: child([command]) });
+  const calls = [];
+  const command = "write call";
+  const commandExecutor = {
+    target: "sandbox",
+    async executeShell(value) {
+      calls.push(value);
+      return { stdout: "once", stderr: "", exit_code: 0 };
+    },
+  };
+  const f = await createDelegationRuntime({ args, child: child([command]), commandExecutor });
   try {
     await startTurn(f.agent, "delegate", "ledger", options());
     const pending = await getPendingApprovals(f.agent, "ledger");
@@ -273,7 +274,7 @@ test("known tool results are reused when a worker checkpoint is replayed before 
     assert.equal(task.status, "running");
     assert.equal(task.tools[0].status, "completed");
     const { executionMiddleware } = await import("../src/delegation/execution.ts");
-    const worker = await Agent.create(f.runtime, "operator", [
+    const worker = await Agent.create(f.runtime, "coder", [
       executionMiddleware(f.store, task.taskId, task.ownerToken, 8),
     ]);
     let checkpoint;
@@ -291,7 +292,7 @@ test("known tool results are reused when a worker checkpoint is replayed before 
       ...options(),
       delegatedTaskId: task.taskId,
     });
-    assert.equal(await readFile(file, "utf8"), "once");
+    assert.deepEqual(calls, [command]);
   } finally {
     await f.runtime.close();
   }
@@ -391,7 +392,7 @@ test("a tool that performs an action and then fails cannot be silently retried",
   );
   const f = await createDelegationRuntime({
     args,
-    operatorTools: [fragile],
+    coderTools: [fragile],
     child: async (messages) => {
       return messages.some(ToolMessage.isInstance)
         ? "must not claim success"

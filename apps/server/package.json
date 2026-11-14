@@ -9,23 +9,26 @@
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "test:postgres": "npm run build && node --test tests/postgres/*.test.mjs"
+    "test:postgres": "npm run build && node --test tests/postgres/*.test.mjs",
+    "test:sandbox": "node --import tsx --test tests/integration/sandbox-websocket.test.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^12.1.3",
     "@nestjs/core": "^12.1.3",
     "@nestjs/platform-express": "^12.1.3",
     "@wingman/core": "*",
+    "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "zod": "^4.6.6",
-    "pg": "^8.23.1"
+    "ws": "^8.23.0",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.16.18",
     "@types/express": "^5.0.0",
-    "chokidar": "^5.0.0",
-    "@types/pg": "^8.23.1"
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "chokidar": "^5.0.0"
   }
 }

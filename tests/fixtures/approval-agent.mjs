@@ -54,6 +54,7 @@ export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } 
       const approved = interrupt({
         kind: "bash_approval",
         command,
+        target: "sandbox",
         execution: {
           agentId: runtime.config.configurable.agent_id,
           taskId: runtime.config.configurable.delegated_task_id ?? null,
@@ -77,6 +78,7 @@ export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } 
       id: "orchestrator",
       async cancelDelegations() {},
       async deleteDelegatedState() {},
+      async releaseConversation() {},
       app: createAgent({ model, tools: [action], checkpointer }),
     },
     executions,
