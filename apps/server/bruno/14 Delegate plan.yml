@@ -10,7 +10,7 @@ http:
     type: json
     data: |-
       {
-        "message": "Use delegate_task to plan three tasks: research and compare as independent analyst tasks, then verify with the operator after both succeed. Give each task a unique key, scoped context, expectedResult and dependsOn keys. For verification request uptime through exec_bash_command, respecting its approval policy, then synthesize the findings here."
+        "message": "Use delegate_task to plan three tasks: research and compare as independent analyst tasks, then verify with the coder after both succeed. Give each task a unique key, scoped context, expectedResult and dependsOn keys. For verification request uptime through exec_bash_command, respecting its approval policy, then synthesize the findings here."
       }
   auth: inherit
 

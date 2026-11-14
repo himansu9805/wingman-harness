@@ -1,6 +1,15 @@
-FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+FROM alpine:latest
 
-RUN apk add --no-cache python3
+RUN apk upgrade --no-cache \
+    && apk add --no-cache python3 nodejs npm git bash curl jq \
+    && apk add --no-cache --virtual .pty-build make g++ nodejs-dev
+
+WORKDIR /usr/local/lib/wingman
+COPY package.json package-lock.json ./
+RUN npm_config_nodedir=/usr npm_config_build_from_source=true npm ci --omit=dev --workspaces=false \
+    && npm cache clean --force \
+    && apk del .pty-build
+COPY pty-supervisor.cjs ./
 
 USER 1000:1000
 WORKDIR /tmp

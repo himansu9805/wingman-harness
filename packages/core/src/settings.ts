@@ -19,7 +19,6 @@ class Settings {
   readonly SCHEDULER_ENABLED: boolean;
   readonly POSTGRES_CONNECTION_STRING: string;
   readonly SANDBOX_DOCKERFILE_DIR: string;
-  readonly COMMAND_EXECUTION_TARGET: "host" | "sandbox";
   readonly SANDBOX_IDLE_TIMEOUT_HOURS: number;
   readonly SANDBOX_SHUTDOWN_ACTION: "retain" | "stop";
 
@@ -37,7 +36,6 @@ class Settings {
     const {
       SCHEDULER_ENABLED,
       POSTGRES_CONNECTION_STRING = "",
-      COMMAND_EXECUTION_TARGET = "host",
       SANDBOX_IDLE_TIMEOUT_HOURS = "24",
       SANDBOX_SHUTDOWN_ACTION = "retain",
       DECISIONS_MODEL_BASE_URL = "",
@@ -69,9 +67,6 @@ class Settings {
       throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
     }
 
-    if (COMMAND_EXECUTION_TARGET !== "host" && COMMAND_EXECUTION_TARGET !== "sandbox") {
-      throw new Error("COMMAND_EXECUTION_TARGET must be host or sandbox");
-    }
     const idleHours = Number(SANDBOX_IDLE_TIMEOUT_HOURS);
     if (!Number.isFinite(idleHours) || idleHours < 1 / 60) {
       throw new Error("SANDBOX_IDLE_TIMEOUT_HOURS must be at least one minute (1/60 hour)");
@@ -81,7 +76,6 @@ class Settings {
     }
     this.SANDBOX_IDLE_TIMEOUT_HOURS = idleHours;
     this.SANDBOX_SHUTDOWN_ACTION = SANDBOX_SHUTDOWN_ACTION;
-    this.COMMAND_EXECUTION_TARGET = COMMAND_EXECUTION_TARGET;
     this.SANDBOX_DOCKERFILE_DIR = join(HOME, "packages/core/sandbox");
     this.SKILLS_DIR = join(HOME, "skills");
     this.MCP_CONFIG_PATH = join(HOME, "mcp.config.json");

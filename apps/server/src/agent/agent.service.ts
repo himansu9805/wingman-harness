@@ -152,7 +152,7 @@ export class AgentService implements OnModuleInit, OnApplicationShutdown {
     }
     const start = Math.max(0, end - limit);
     const messages = history.messages.slice(start, end);
-    // Bound the journal read. Events committed after this watermark arrive via SSE.
+    // Bound the journal read. Events committed after this watermark arrive via the event stream.
     const watermark = includeActivity
       ? (position?.journalThrough ?? (await this.events.latest(threadId)))
       : undefined;

@@ -34,11 +34,13 @@ export function apiGuard(config: ReturnType<typeof backendConfig>) {
       response.end(JSON.stringify({ message }));
     };
     const taskPath = /^\/api\/tasks(?:\/(?:runs|[\w-]{1,64}))?\/?$/.test(path.split("?")[0]);
-    const sandboxPath = /^\/api\/sandboxes(?:\/[\w-]{1,64}\/output)?\/?$/.test(path.split("?")[0]);
+    const sandboxPath = /^\/api\/sandboxes(?:\/[\w-]{1,64}(?:\/(?:stop))?)?\/?$/.test(
+      path.split("?")[0],
+    );
     if (
       !taskPath &&
       !sandboxPath &&
-      !/^\/api\/threads(?:\/[\w-]{1,64}(?:\/(?:messages|pending|resume|events))?)?\/?$/.test(
+      !/^\/api\/threads(?:\/[\w-]{1,64}(?:\/(?:messages|pending|resume))?)?\/?$/.test(
         path.split("?")[0],
       )
     ) {
@@ -67,4 +69,16 @@ export function apiGuard(config: ReturnType<typeof backendConfig>) {
     }
     next();
   };
+}
+
+/** Accept browser WebSocket upgrades only when their origin matches the web host. */
+export function isAllowedWebSocketOrigin(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  if (!origin) return false;
+  try {
+    const source = new URL(origin);
+    return ["http:", "https:"].includes(source.protocol) && source.host === request.headers.host;
+  } catch {
+    return false;
+  }
 }

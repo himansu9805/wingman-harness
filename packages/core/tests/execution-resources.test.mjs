@@ -38,7 +38,7 @@ test("approval pauses retain worker resources until completion or cancellation",
   const released = [];
   const { ToolMessage } = await import("@langchain/core/messages");
   const f = await createDelegationRuntime({
-    args: { agentId: "operator", objective: "Inspect uptime", context: "" },
+    args: { agentId: "coder", objective: "Inspect uptime", context: "" },
     executionResources: [{ release: async (id) => released.push(id), close: async () => {} }],
     child: async (messages) =>
       messages.some(ToolMessage.isInstance)

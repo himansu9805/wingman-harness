@@ -1,92 +1,118 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EventParser, watchEvents } from "../src/features/chat/api/events.ts";
+import { watchEvents } from "../src/features/chat/api/events.ts";
 import { applyEvent, emptyActivity, toolsWithResults } from "../src/features/chat/model/events.ts";
 
-function response(text) {
-  return new Response(text, { headers: { "content-type": "text/event-stream" } });
+function socketFactory(scenarios, requests) {
+  return (url) => {
+    const socket = {
+      readyState: 0,
+      close() {
+        if (this.readyState >= 2) return;
+        this.readyState = 3;
+        this.onclose?.({ code: 1000, reason: "" });
+      },
+    };
+    requests.push(url);
+    queueMicrotask(() => {
+      socket.readyState = 1;
+      socket.onopen?.();
+      scenarios[requests.length - 1](socket);
+    });
+    return socket;
+  };
 }
+const event = (sequence, type) =>
+  JSON.stringify({
+    type: "event",
+    id: `thread:${sequence}`,
+    event: { type, runId: "run", text: "answer" },
+  });
+const replay = (sequence) =>
+  JSON.stringify({ type: "replay_complete", cursor: `thread:${sequence}` });
 
-test("SSE parsing survives every chunk boundary, CRLF, comments and multiline data", () => {
-  const text =
-    ': heartbeat\r\nid: thread:9007199254740993\r\nevent: done\r\ndata: {"type":"done",\r\ndata: "text":"héllo"}\r\n\r\n';
-  for (let cut = 0; cut <= text.length; cut++) {
-    const frames = [];
-    const parser = new EventParser((frame) => frames.push(frame));
-    parser.push(text.slice(0, cut));
-    parser.push(text.slice(cut));
-    assert.equal(frames.length, 1);
-    assert.equal(frames[0].id, "thread:9007199254740993");
-    assert.deepEqual(JSON.parse(frames[0].data), { type: "done", text: "héllo" });
-  }
-});
-
-test("reconnection sends the last processed ID, deduplicates replay and never posts", async () => {
+test("WebSocket reconnection resumes the cursor and preserves replay boundaries", async () => {
   const controller = new AbortController();
-  const ids = [];
+  const received = [];
+  const completed = [];
   const requests = [];
+  const send = (socket, data) => socket.onmessage?.({ data });
   await watchEvents({
-    connection: { url: "http://local.test", token: "test-only" },
+    connection: { url: "http://local.test" },
     threadId: "thread",
     signal: controller.signal,
+    wait: async () => {},
     onStatus() {},
     onError(error) {
       throw error;
     },
-    wait: async () => {},
-    onEvent(event, id) {
-      ids.push(id);
-      if (event.type === "done") controller.abort();
+    onReplayComplete() {
+      completed.push(received.length);
     },
-    fetcher: async (url, options) => {
-      requests.push({ url, options });
-      const route =
-        'id: thread:1\nevent: route\ndata: {"type":"route","runId":"run","choice":"fast","confidence":0}\n\n';
-      return response(
-        requests.length === 1
-          ? route
-          : route +
-              'id: thread:2\nevent: done\ndata: {"type":"done","runId":"run","text":"done"}\n\n',
-      );
+    onEvent(value, id, replaying) {
+      received.push({ id, replaying });
+      if (id === "thread:3") controller.abort();
     },
+    socketFactory: socketFactory(
+      [
+        (socket) => {
+          send(socket, event(1, "route"));
+          socket.close();
+        },
+        (socket) => {
+          send(socket, event(1, "route"));
+          send(socket, event(2, "done"));
+          send(socket, replay(2));
+          send(socket, event(3, "route"));
+        },
+      ],
+      requests,
+    ),
   });
-  assert.deepEqual(ids, ["thread:1", "thread:2"]);
-  assert.equal(requests.length, 2);
-  assert.equal(requests[1].options.headers["Last-Event-ID"], "thread:1");
-  assert.ok(requests.every((r) => !r.options.method));
-  assert.equal(requests[0].options.headers.Authorization, undefined);
-  assert.equal(requests[0].options.credentials, "same-origin");
+  assert.deepEqual(received, [
+    { id: "thread:1", replaying: true },
+    { id: "thread:2", replaying: true },
+    { id: "thread:3", replaying: false },
+  ]);
+  assert.deepEqual(completed, [2]);
+  assert.equal(new URL(requests[1]).searchParams.get("after"), "thread:1");
+  assert.equal(new URL(requests[0]).protocol, "ws:");
 });
 
-test("authentication and deleted-thread errors stop retrying", async () => {
+test("rejected WebSocket connections stop retrying", async () => {
   for (const status of [400, 401, 403, 404]) {
-    let attempts = 0;
+    const requests = [];
     let error;
     await watchEvents({
-      connection: { url: "http://local.test", token: "test-only" },
+      connection: { url: "http://local.test" },
       threadId: "thread",
       signal: new AbortController().signal,
       onStatus() {},
       onEvent() {
         assert.fail();
       },
-      onError(e) {
-        error = e;
+      onError(value) {
+        error = value;
       },
-      fetcher: async () => {
-        attempts++;
-        return new Response("", { status });
-      },
-      wait: async () => assert.fail("must not retry"),
+      wait: async () => assert.fail(),
+      socketFactory: socketFactory(
+        [
+          (socket) => {
+            socket.readyState = 3;
+            socket.onclose?.({ code: status + 4000, reason: "Rejected" });
+          },
+        ],
+        requests,
+      ),
     });
-    assert.equal(attempts, 1);
+    assert.equal(requests.length, 1);
     assert.equal(error.status, status);
   }
 });
 
-test("an already-aborted listener makes no requests", async () => {
+test("an already-aborted listener opens no WebSocket", async () => {
   await watchEvents({
-    connection: { url: "http://local.test", token: "test" },
+    connection: { url: "http://local.test" },
     threadId: "thread",
     signal: AbortSignal.abort(),
     onStatus() {},
@@ -96,7 +122,9 @@ test("an already-aborted listener makes no requests", async () => {
     onError() {
       assert.fail();
     },
-    fetcher: async () => assert.fail(),
+    socketFactory() {
+      assert.fail();
+    },
   });
 });
 
@@ -163,56 +191,4 @@ test("reused tool IDs never overwrite completed history or borrow an earlier res
     truncated: false,
   });
   assert.deepEqual(toolsWithResults([completed], events)[0].result, completed.result);
-});
-
-test("replay is explicit on each connection and interrupted catch-up resumes without losing events", async () => {
-  const controller = new AbortController();
-  const received = [];
-  const completed = [];
-  const requests = [];
-  let status;
-  const frame = (sequence, type) =>
-    `id: thread:${sequence}\nevent: ${type}\ndata: ${JSON.stringify({ type, runId: "run", text: "answer" })}\n\n`;
-  await watchEvents({
-    connection: { url: "http://local.test" },
-    threadId: "thread",
-    signal: controller.signal,
-    wait: async () => {},
-    onStatus(value) {
-      status = value;
-    },
-    onError(error) {
-      throw error;
-    },
-    onReplayComplete() {
-      completed.push(received.length);
-    },
-    onEvent(event, id, replaying) {
-      received.push({ id, replaying });
-      if (id === "thread:3") {
-        assert.equal(status, "live");
-        controller.abort();
-      } else {
-        assert.notEqual(status, "live");
-      }
-    },
-    fetcher: async (_url, options) => {
-      requests.push(options);
-      return response(
-        requests.length === 1
-          ? frame(1, "route")
-          : frame(1, "route") +
-              frame(2, "done") +
-              'event: replay_complete\ndata: {"cursor":"thread:2"}\n\n' +
-              frame(3, "route"),
-      );
-    },
-  });
-  assert.deepEqual(received, [
-    { id: "thread:1", replaying: true },
-    { id: "thread:2", replaying: true },
-    { id: "thread:3", replaying: false },
-  ]);
-  assert.deepEqual(completed, [2]);
-  assert.equal(requests[1].headers["Last-Event-ID"], "thread:1");
 });

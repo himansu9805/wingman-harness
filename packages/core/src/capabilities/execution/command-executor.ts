@@ -2,8 +2,7 @@
 export interface CommandExecutionContext {
   readonly threadId: string | undefined;
   readonly signal: AbortSignal | undefined;
-  readonly cwd: string;
-  readonly target: "host" | "sandbox";
+  readonly target: "sandbox";
 }
 
 export interface CommandExecutionResult {
@@ -21,13 +20,10 @@ export interface CommandExecutionResult {
     | "transport_error";
 }
 
-/** Execute an already validated argument vector without interpolating it in Wingman. */
-export interface CommandExecutor {
-  readonly target: CommandExecutionContext["target"];
-  execute(
-    argv: readonly string[],
-    context: CommandExecutionContext,
-  ): Promise<CommandExecutionResult>;
-  /** Execute an approved shell script only when the executor explicitly supports it. */
-  executeShell?(script: string, context: CommandExecutionContext): Promise<CommandExecutionResult>;
+/** Execute approved scripts in a sandbox's persistent shell. */
+export interface SandboxCommandExecutor {
+  readonly target: "sandbox";
+  executeShell(script: string, context: CommandExecutionContext): Promise<CommandExecutionResult>;
 }
+
+export type CommandExecutor = SandboxCommandExecutor;

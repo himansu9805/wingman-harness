@@ -33,8 +33,8 @@
 - **Bring your own models.** The chat models can be any OpenAI-compatible
   endpoint, such as [Ollama](https://ollama.com) running locally or OpenAI
   itself. A small classifier routes each turn to a fast or a strong model.
-- **Shell access with human approval.** Safe commands run immediately,
-  dangerous ones are blocked, and everything else pauses until you approve it.
+- **Sandboxed shell access.** Allow-listed commands run immediately; other
+  commands wait for your approval.
 - **Skills.** Markdown instructions the agent loads only when a task needs
   them.
 - **MCP servers.** Tools from any
@@ -45,14 +45,14 @@
 - **Scheduled tasks.** Reminders and recurring jobs, backed by Postgres.
 - **Durable conversations.** Threads and pending approvals survive restarts.
 - **Three ways in.** A React web app, an interactive CLI, and a NestJS API
-  with replayable thread events delivered as Server-Sent Events.
+  with replayable thread events delivered over WebSocket.
 
 ## How it works
 
 ```mermaid
 flowchart LR
     CLI["apps/cli<br/>terminal chat"] --> Core
-    Server["apps/server<br/>NestJS + SSE"] --> Core
+    Server["apps/server<br/>NestJS + WebSocket"] --> Core
     Web["apps/web<br/>React + Astryx"] --> Server
 
     subgraph Core["packages/core (@wingman/core)"]
@@ -151,12 +151,7 @@ The response is `201 {"id":"..."}`. Copy the returned ID into this variable:
 export THREAD_ID='<thread-id>'
 ```
 
-Open a persistent event subscription in one terminal:
-
-```bash
-curl -N "http://127.0.0.1:3000/threads/$THREAD_ID/events" \
-  -H "Authorization: Bearer $WINGMAN_API_TOKEN"
-```
+Connect to the authenticated WebSocket event stream as described in the [HTTP API wiki](https://github.com/himansu9805/wingman-harness/wiki/HTTP-API).
 
 Send a message from another terminal. The request returns `202 {"runId":"..."}`;
 execution continues if either client disconnects.
@@ -171,9 +166,7 @@ curl "http://127.0.0.1:3000/threads/$THREAD_ID/messages" \
 The subscription receives progress and, when approval is required, an event like:
 
 ```text
-id: <thread-id>:3
-event: approval
-data: {"type":"approval","approvals":[{"id":"<approval-id>","command":"uptime"}],"runId":"<run-id>"}
+{"type":"event","id":"<thread-id>:3","event":{"type":"approval","approvals":[{"id":"<approval-id>","command":"uptime"}],"runId":"<run-id>","createdAt":"<timestamp>"}}
 ```
 
 Approve using that ID. Resume also returns `202` with a new run ID; tool results
@@ -186,7 +179,7 @@ curl "http://127.0.0.1:3000/threads/$THREAD_ID/resume" \
   -d '{"answers":{"<approval-id>":true}}'
 ```
 
-Reconnect using `Last-Event-ID: <thread-id>:<last-received-sequence>` to replay
+Reconnect using the `after=<thread-id>:<last-received-sequence>` query parameter to replay
 missed events. Without a cursor, the stream replays the thread's full event log.
 The subscription stays open across `approval`, `done` and `error` events.
 
@@ -221,7 +214,7 @@ throughout pre-release development. A detailed `docs/` directory is planned for 
 To report a vulnerability, follow the [security policy](SECURITY.md). Keep
 vulnerability details out of public issues and pull requests.
 
-Wingman can run commands on the machine it's installed on. The server binds to
+Wingman runs shell commands in Docker sandboxes. The server binds to
 `127.0.0.1` and requires a bearer token; don't expose it to a network without
 real authentication and TLS. Commands outside the allow list need your
 approval, enforced inside the agent graph, but tools from MCP servers run

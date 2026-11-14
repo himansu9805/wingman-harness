@@ -104,10 +104,7 @@ test("entry points select the orchestrator with the registered specialist catalo
   try {
     assert.equal(f.agent.id, "orchestrator");
     const root = f.runtime.agents.get("orchestrator");
-    assert.deepEqual(
-      new Set(root.delegation.agents),
-      new Set(["analyst", "operator", "researcher"]),
-    );
+    assert.deepEqual(new Set(root.delegation.agents), new Set(["analyst", "coder", "researcher"]));
     assert.throws(() => f.runtime.agents.get("default"), /Unknown agent/);
     await startTurn(f.agent, "simple greeting", "orchestrator-direct", {
       signal: AbortSignal.timeout(10000),

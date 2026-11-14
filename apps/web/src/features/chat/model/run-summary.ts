@@ -15,7 +15,7 @@ export function duration(ms: number): string {
   return `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
 }
 
-/** Display backend counts as snapshots, never sums of repeated SSE messages. */
+/** Display backend counts as snapshots, never sums of repeated stream messages. */
 export function runSummary(run: RunMetadata): string[] {
   const status = {
     completed: "Completed",

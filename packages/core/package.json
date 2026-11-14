@@ -51,6 +51,7 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "@types/shell-quote": "^1.7.5"
   }

@@ -33,7 +33,7 @@ export type NativeApproval = Interrupt<ApprovalPayload>;
 export function commandApproval(
   command: string,
   runtime: ToolRuntime,
-  target: "host" | "sandbox" = "host",
+  target: "host" | "sandbox" = "sandbox",
 ): CommandApproval {
   return CommandApprovalSchema.parse({
     kind: "bash_approval",

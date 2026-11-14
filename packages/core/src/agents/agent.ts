@@ -52,8 +52,6 @@ async function buildAgentGraph(
   const prompt = dynamicSystemPromptMiddleware(async () =>
     buildSystemPrompt({
       definition,
-      commandTarget: runtime.commandTarget,
-      sandboxShell: runtime.sandboxShell,
       toolNames,
       memoryIndex: capabilities.memory === "none" ? "" : await runtime.getMemoryIndex(),
       skillIndex,
@@ -77,9 +75,6 @@ export class Agent {
   ) {}
 
   /** Trusted target used to validate pending command approvals on resume. */
-  get commandTarget(): "host" | "sandbox" {
-    return this.runtime.commandTarget;
-  }
 
   /** Read-only sandbox metadata and output, when sandbox execution is enabled. */
   get sandboxMonitor() {

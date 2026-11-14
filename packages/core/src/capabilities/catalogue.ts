@@ -48,7 +48,7 @@ export function createLoadSkillTool(
 /** Builds the shared catalogue; graph construction binds load_skill to its own selection. */
 export function createLocalTools(
   skills: readonly SkillMeta[],
-  executor?: CommandExecutor,
+  executor: CommandExecutor,
 ): StructuredToolInterface[] {
   return [
     createLoadSkillTool(skills),

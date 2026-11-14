@@ -1,3 +1,4 @@
+import { sandboxExecutor } from "../../../tests/fixtures/sandbox-executor.mjs";
 import { MemoryDelegationStore } from "../src/delegation/storage/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -36,7 +37,7 @@ function fixture({ closeMcp, ...overrides } = {}) {
       const {
         createOrchestratorAgentDefinition,
         analystAgentDefinition,
-        operatorAgentDefinition,
+        coderAgentDefinition,
         researcherAgentDefinition,
       } = await import("../src/agents/builtins/index.ts");
       const { fastModel, strongModel, modelRouter } =
@@ -45,10 +46,10 @@ function fixture({ closeMcp, ...overrides } = {}) {
         definitions: [
           createOrchestratorAgentDefinition(),
           analystAgentDefinition,
-          operatorAgentDefinition,
+          coderAgentDefinition,
           researcherAgentDefinition,
         ],
-        globalTools: createLocalTools(skills),
+        globalTools: createLocalTools(skills, sandboxExecutor),
         models: { fast: fastModel, powerful: strongModel, routingMiddleware: modelRouter },
       };
     },

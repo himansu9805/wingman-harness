@@ -1,21 +1,28 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { StringDecoder } from "node:string_decoder";
+import { MAX_PTY_REQUEST_BYTES } from "./pty-session";
+import { SandboxSessions } from "./sandbox-sessions";
+import { initializeSandboxStorage, sandboxName } from "./sandbox-storage";
+import {
+  buildSandboxImage,
+  checkDocker,
+  sandboxNetwork,
+  removeSandboxNetwork,
+} from "./sandbox-docker-resources";
 import pg from "pg";
 import type { SandboxInfo, SandboxMonitor } from "./sandbox-monitor";
-import { SandboxOutput } from "./sandbox-output";
+import { SandboxOutput, type SandboxOutputCursor, type SandboxOutputEvent } from "./sandbox-output";
 import type {
   CommandExecutionContext,
   CommandExecutionResult,
-  CommandExecutor,
-} from "./command-executor";
+  SandboxCommandExecutor,
+} from "../command-executor";
 
 const execFileAsync = promisify(execFile);
-const IMAGE = "wingman-sandbox:local";
 const MAX_OUTPUT = 1024 * 1024;
 const RESTART_WARNING =
-  "The stopped conversation container was restarted. Its previous temporary files were lost when it stopped.";
+  "The stopped conversation container was restarted. Its previous temporary files were lost when it stopped. The previous shell state was also lost.";
 
 interface ContainerState {
   discard: boolean;
@@ -23,7 +30,7 @@ interface ContainerState {
 }
 
 /** Owns one restricted Docker container per conversation and executes approved argv in it. */
-export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
+export class DockerCommandExecutor implements SandboxCommandExecutor, SandboxMonitor {
   readonly target = "sandbox" as const;
   private readonly pool: pg.Pool;
   private imageId?: string;
@@ -32,9 +39,10 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
   private sweeping?: Promise<void>;
   private closing = false;
   private readonly output = new SandboxOutput();
+  private readonly sessions: SandboxSessions;
 
   constructor(
-    databaseUrl: string,
+    private readonly databaseUrl: string,
     private readonly dockerfileDir: string,
     private readonly options: {
       idleTimeoutHours?: number;
@@ -48,33 +56,13 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
       throw new Error("Sandbox idle timeout must be at least one minute");
     }
     this.pool = new pg.Pool({ connectionString: databaseUrl, connectionTimeoutMillis: 5000 });
+    this.sessions = new SandboxSessions(databaseUrl, this.output);
   }
 
   async init(): Promise<void> {
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS wingman_docker_sessions (
-      thread_id TEXT PRIMARY KEY,
-      container_name TEXT NOT NULL UNIQUE,
-      owner_token UUID NOT NULL,
-      container_id TEXT UNIQUE,
-      last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      expired_at TIMESTAMPTZ,
-      recovery_reason TEXT
-    )`);
-    await this.pool.query(
-      "ALTER TABLE wingman_docker_sessions ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(), ADD COLUMN IF NOT EXISTS expired_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS recovery_reason TEXT",
-    );
-    await execFileAsync("docker", ["build", "--tag", IMAGE, this.dockerfileDir], {
-      timeout: 180_000,
-      maxBuffer: MAX_OUTPUT,
-    });
-    const image = await execFileAsync(
-      "docker",
-      ["image", "inspect", "--format", "{{.Id}}", IMAGE],
-      { timeout: 10_000 },
-    );
-    this.imageId = image.stdout.trim();
-    if (!/^sha256:[a-f0-9]{64}$/.test(this.imageId))
-      throw new Error("Docker did not return an image ID");
+    await checkDocker();
+    await initializeSandboxStorage(this.pool);
+    this.imageId = await buildSandboxImage(this.dockerfileDir);
     await this.expireIdle();
     this.initialized = true;
     this.sweepTimer = setInterval(() => {
@@ -103,8 +91,8 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
       locked = true;
       const name = `wingman-${createHash("sha256").update(threadId).digest("hex").slice(0, 24)}`;
       await db.query(
-        "INSERT INTO wingman_docker_sessions(thread_id, container_name, owner_token) VALUES ($1,$2,$3) ON CONFLICT (thread_id) DO NOTHING",
-        [threadId, name, randomUUID()],
+        "INSERT INTO wingman_docker_sessions(thread_id, container_name, owner_token, sandbox_name) VALUES ($1,$2,$3,$4) ON CONFLICT (thread_id) DO NOTHING",
+        [threadId, name, randomUUID(), sandboxName(threadId)],
       );
       const { rows } = await db.query<{
         container_name: string;
@@ -119,6 +107,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
       const record = rows[0]!;
       state.recoveryReason = record.recovery_reason ?? undefined;
       const prepareReplacement = async (reason: "missing" | "expired") => {
+        await removeSandboxNetwork(record.owner_token);
         record.container_name = `wingman-${randomUUID()}`;
         record.owner_token = randomUUID();
         record.container_id = null;
@@ -151,6 +140,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
         if (record.container_id) await prepareReplacement("missing");
       }
       if (!inspected) {
+        const networkId = await sandboxNetwork(record.owner_token);
         const { stdout } = await execFileAsync(
           "docker",
           [
@@ -161,7 +151,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
             "--label",
             `io.wingman.owner=${record.owner_token}`,
             "--network",
-            "none",
+            networkId,
             "--read-only",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
@@ -231,12 +221,32 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
     }
   }
 
-  async execute(
-    argv: readonly string[],
+  /** Execute an approved script in the conversation's persistent shell. */
+  async executeShell(
+    script: string,
     context: CommandExecutionContext,
   ): Promise<CommandExecutionResult> {
-    if (context.target !== "sandbox" || !context.threadId || !argv[0])
+    return this.runScript(script, context);
+  }
+
+  private async runScript(
+    script: string,
+    context: CommandExecutionContext,
+  ): Promise<CommandExecutionResult> {
+    if (context.target !== "sandbox" || !context.threadId || !script.trim())
       throw new Error("Docker execution requires a conversation and a non-empty command");
+    const requestSize = Buffer.byteLength(
+      `${JSON.stringify({ type: "execute", id: "00000000-0000-4000-8000-000000000000", command: script })}\n`,
+    );
+    if (requestSize > MAX_PTY_REQUEST_BYTES) {
+      return {
+        stdout: "",
+        stderr: "",
+        exit_code: 1,
+        failure: "access_denied",
+        error: "Command exceeds the sandbox request size limit; no command was sent.",
+      };
+    }
     const use = await this.pool.connect().catch(() => undefined);
     if (!use) {
       return {
@@ -252,13 +262,27 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
     const state: ContainerState = { discard: false };
     try {
       context.signal?.throwIfAborted();
-      await use.query("SELECT pg_advisory_lock_shared(hashtextextended($1, 0))", [useLock]);
+      await use.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [useLock]);
       locked = true;
       context.signal?.throwIfAborted();
+      const sessionState = await use.query<{ shell_uncertain: boolean }>(
+        "SELECT shell_uncertain FROM wingman_docker_sessions WHERE thread_id=$1",
+        [context.threadId],
+      );
+      if (sessionState.rows[0]?.shell_uncertain) {
+        return {
+          stdout: "",
+          stderr: "",
+          exit_code: 1,
+          failure: "sandbox_unavailable",
+          error:
+            "A previous sandbox command has an uncertain outcome. Stop or remove the sandbox before running another command.",
+        };
+      }
       await use.query("UPDATE wingman_docker_sessions SET last_used_at=now() WHERE thread_id=$1", [
         context.threadId,
       ]);
-      const result = await this.executeInContainer(argv, context, context.threadId, use, state);
+      const result = await this.executeInContainer(script, context, context.threadId, use, state);
       if (result.recoveryReason && !result.result.failure) {
         try {
           await use.query(
@@ -287,7 +311,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
             "UPDATE wingman_docker_sessions SET last_used_at=now() WHERE thread_id=$1",
             [context.threadId],
           );
-          await use.query("SELECT pg_advisory_unlock_shared(hashtextextended($1, 0))", [useLock]);
+          await use.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [useLock]);
         } catch {
           state.discard = true;
         }
@@ -296,17 +320,8 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
     }
   }
 
-  /** Execute the exact approved script inside the sandbox's unprivileged shell. */
-  async executeShell(
-    script: string,
-    context: CommandExecutionContext,
-  ): Promise<CommandExecutionResult> {
-    if (context.target !== "sandbox") throw new Error("Shell scripts require a sandbox target");
-    return this.execute(["/bin/sh", "-c", script], context);
-  }
-
   private async executeInContainer(
-    argv: readonly string[],
+    script: string,
     context: CommandExecutionContext,
     threadId: string,
     db: pg.PoolClient,
@@ -318,6 +333,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
       sandbox = await this.container(threadId, db, state);
       context.signal?.throwIfAborted();
     } catch (error) {
+      if (!context.signal?.aborted) console.error("Docker sandbox preparation failed", error);
       return {
         result: {
           stdout: "",
@@ -336,70 +352,83 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
       };
     }
     try {
-      this.output.publish(threadId, "\r\n[Command started]\r\n");
-      const command = execFileAsync(
-        "docker",
-        ["exec", "--workdir", "/tmp", sandbox.id, "/usr/bin/timeout", "30", ...argv],
-        { timeout: 35_000, signal: context.signal, maxBuffer: MAX_OUTPUT },
-      );
-      const outDecoder = new StringDecoder("utf8");
-      const errDecoder = new StringDecoder("utf8");
-      command.child.stdout?.on("data", (data: Buffer) =>
-        this.output.publish(threadId, outDecoder.write(data)),
-      );
-      command.child.stderr?.on("data", (data: Buffer) =>
-        this.output.publish(threadId, errDecoder.write(data)),
-      );
-      const { stdout, stderr } = await command;
+      const { session, reset } = await this.sessions.acquire(threadId, sandbox.id, db);
+      context.signal?.throwIfAborted();
+      if (reset)
+        this.output.publish(
+          threadId,
+          "\r\n[Shell session restarted; previous shell state is unavailable]\r\n",
+          { kind: "session.reset" },
+        );
+      const commandId = randomUUID();
+
+      // Record intent before sending the command. A crash leaves the session blocked
+      // until the user explicitly resets the sandbox, rather than replaying uncertain work.
+      await db.query("UPDATE wingman_docker_sessions SET shell_uncertain=true WHERE thread_id=$1", [
+        threadId,
+      ]);
+      const result = await session.execute(script, context.signal, commandId, () => {
+        this.output.publish(threadId, `\r\n[Command started]\r\n$ ${script}\r\n`, {
+          kind: "command.started",
+          commandId,
+        });
+      });
+      let persistenceWarning: string | undefined;
+      if (!result.failure) {
+        try {
+          await db.query(
+            "UPDATE wingman_docker_sessions SET shell_uncertain=false WHERE thread_id=$1",
+            [threadId],
+          );
+        } catch {
+          persistenceWarning =
+            "The command finished, but its state could not be saved. Stop or remove the sandbox before running another command.";
+          await this.sessions
+            .close(threadId)
+            .catch((error: unknown) => console.error("Failed to close PTY session", error));
+        }
+      } else {
+        await this.sessions
+          .close(threadId)
+          .catch((error: unknown) => console.error("Failed to close uncertain PTY session", error));
+      }
       this.output.publish(
         threadId,
-        outDecoder.end() + errDecoder.end() + "\r\n[Command completed]\r\n",
+        result.failure
+          ? "\r\n[Command outcome uncertain]\r\n"
+          : `\r\n[Command completed] Exit code: ${result.exit_code}\r\n`,
+        {
+          kind: result.failure ? "command.uncertain" : "command.completed",
+          commandId,
+          ...(!result.failure && { exitCode: result.exit_code }),
+        },
       );
+      const warning = [
+        sandbox.warning,
+        persistenceWarning,
+        reset ? "The shell session restarted; previous shell state is unavailable." : undefined,
+      ]
+        .filter(Boolean)
+        .join(" ");
       return {
         recoveryReason: sandbox.recoveryReason,
         containerId: sandbox.id,
-        result: {
-          stdout,
-          stderr,
-          exit_code: 0,
-          ...(sandbox.warning && { warning: sandbox.warning }),
-        },
+        result: { ...result, ...(warning && { warning }) },
       };
     } catch (error) {
-      this.output.publish(threadId, "\r\n[Command ended with an error or was interrupted]\r\n");
-      const failure = error as NodeJS.ErrnoException & {
-        stdout?: string;
-        stderr?: string;
-        code?: number | string;
-        killed?: boolean;
-      };
-      if (
-        typeof failure.code === "number" &&
-        failure.code !== 125 &&
-        failure.code !== 126 &&
-        failure.code !== 127
-      )
-        return {
-          recoveryReason: sandbox.recoveryReason,
-          containerId: sandbox.id,
-          result: {
-            stdout: failure.stdout ?? "",
-            stderr: failure.stderr ?? "",
-            exit_code: failure.code,
-            ...(sandbox.warning && { warning: sandbox.warning }),
-          },
-        };
+      if (!context.signal?.aborted) console.error("PTY session preparation failed", error);
       return {
         recoveryReason: sandbox.recoveryReason,
         containerId: sandbox.id,
         result: {
-          stdout: failure.stdout ?? "",
-          stderr: failure.stderr ?? "",
-          exit_code: typeof failure.code === "number" ? failure.code : 1,
+          stdout: "",
+          stderr: "",
+          exit_code: 1,
+          failure: context.signal?.aborted ? "canceled" : "sandbox_unavailable",
+          error: context.signal?.aborted
+            ? "Sandbox execution was canceled before the command was sent."
+            : "Could not start the sandbox shell session; no command was sent. Existing sandboxes may need to be removed and recreated with the current image.",
           ...(sandbox.warning && { warning: sandbox.warning }),
-          ...(failure.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" && { output_truncated: true }),
-          failure: context.signal?.aborted ? "canceled" : "transport_error",
-          error: "Docker execution was interrupted or failed; the command outcome may be unknown.",
         },
       };
     }
@@ -409,11 +438,14 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
   async list(): Promise<SandboxInfo[]> {
     const { rows } = await this.pool.query<{
       thread_id: string;
+      sandbox_name: string;
       container_id: string | null;
       last_used_at: Date;
       expired_at: Date | null;
+      shell_uncertain: boolean;
+      shell_session_id: string | null;
     }>(
-      "SELECT thread_id, container_id, last_used_at, expired_at FROM wingman_docker_sessions ORDER BY last_used_at DESC LIMIT 100",
+      "SELECT thread_id, sandbox_name, container_id, last_used_at, expired_at, shell_uncertain, shell_session_id FROM wingman_docker_sessions ORDER BY last_used_at DESC LIMIT 100",
     );
     const results: SandboxInfo[] = new Array(rows.length);
     let next = 0;
@@ -443,8 +475,43 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
               if (failure.code === 1 && failure.stderr?.includes("No such")) status = "missing";
             }
           }
+          let sessionStatus: SandboxInfo["sessionStatus"] = row.shell_uncertain
+            ? "needs_reset"
+            : "inactive";
+          const current = this.sessions.get(row.thread_id);
+          if (current && !current.session.isClosed) {
+            sessionStatus = current.session.isExecuting ? "running" : "ready";
+          } else if (row.shell_session_id && !row.expired_at) {
+            const db = await this.pool.connect();
+            let locked = false;
+            let discard = false;
+            try {
+              const ownership = await db.query<{ acquired: boolean }>(
+                "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+                [`wingman-pty-session:${row.thread_id}`],
+              );
+              locked = Boolean(ownership.rows[0]?.acquired);
+              if (!locked) sessionStatus = "remote";
+            } catch {
+              sessionStatus = "unavailable";
+              discard = true;
+            } finally {
+              if (locked) {
+                try {
+                  await db.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
+                    `wingman-pty-session:${row.thread_id}`,
+                  ]);
+                } catch {
+                  discard = true;
+                }
+              }
+              db.release(discard);
+            }
+          }
           results[index] = {
             threadId: row.thread_id,
+            name: row.sandbox_name,
+            sessionStatus,
             containerId: row.container_id,
             status,
             createdAt,
@@ -457,17 +524,18 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
     return results;
   }
 
-  /** Subscribe to a known sandbox's output; recent output is retained in memory only. */
-  async subscribe(
+  /** Subscribe to sequenced output for a known sandbox, including bounded replay. */
+  async subscribeEvents(
     threadId: string,
-    listener: (text: string) => void,
-  ): Promise<{ snapshot: string; unsubscribe(): void }> {
+    after: SandboxOutputCursor | null,
+    listener: (event: SandboxOutputEvent) => void,
+  ) {
     const found = await this.pool.query(
       "SELECT 1 FROM wingman_docker_sessions WHERE thread_id=$1",
       [threadId],
     );
     if (!found.rowCount) throw new Error("Sandbox not found");
-    return this.output.subscribe(threadId, listener);
+    return this.output.subscribeEvents(threadId, after, listener);
   }
 
   /** Removes idle containers, leaving an expired record so lost files are not silently replaced. */
@@ -479,6 +547,55 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
       [cutoff],
     );
     for (const row of rows) await this.remove(row.thread_id, cutoff, true);
+  }
+
+  /** Resize a locally owned, active PTY session. */
+  async resize(threadId: string, cols: number, rows: number): Promise<boolean> {
+    if (
+      !Number.isInteger(cols) ||
+      !Number.isInteger(rows) ||
+      cols < 20 ||
+      cols > 500 ||
+      rows < 5 ||
+      rows > 200
+    )
+      throw new Error("Invalid terminal dimensions");
+    this.sessions.resize(threadId, cols, rows);
+    return true;
+  }
+
+  /** Stop an owned sandbox after its active commands finish. */
+  async stop(threadId: string): Promise<boolean> {
+    const db = await this.pool.connect();
+    const key = `wingman-docker-use:${threadId}`;
+    let locked = false;
+    let discard = false;
+    try {
+      await db.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [key]);
+      locked = true;
+      const { rows } = await db.query<{ container_id: string | null }>(
+        "SELECT container_id FROM wingman_docker_sessions WHERE thread_id=$1 AND expired_at IS NULL",
+        [threadId],
+      );
+      if (!rows[0]?.container_id) return false;
+      await this.sessions.close(threadId);
+      await execFileAsync("docker", ["stop", rows[0].container_id], { timeout: 30_000 });
+      await db.query(
+        "UPDATE wingman_docker_sessions SET shell_uncertain=false WHERE thread_id=$1",
+        [threadId],
+      );
+      this.output.publish(threadId, "\r\n[Sandbox stopped; temporary files were removed]\r\n");
+      return true;
+    } finally {
+      if (locked) {
+        try {
+          await db.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [key]);
+        } catch {
+          discard = true;
+        }
+      }
+      db.release(discard);
+    }
   }
 
   async release(threadId: string): Promise<void> {
@@ -537,6 +654,8 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
           if (failure.code !== 1 || !failure.stderr?.includes("No such container")) throw error;
         }
       }
+      await this.sessions.close(threadId);
+      this.sessions.forgetSize(threadId);
       if (id) {
         try {
           await execFileAsync("docker", ["rm", "--force", id], { timeout: 30_000 });
@@ -545,6 +664,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
           if (failure.code !== 1 || !failure.stderr?.includes("No such container")) throw error;
         }
       }
+      if (record) await removeSandboxNetwork(record.owner_token);
       if (expiredBefore) {
         await db.query("UPDATE wingman_docker_sessions SET expired_at=now() WHERE thread_id=$1", [
           threadId,
@@ -579,6 +699,7 @@ export class DockerCommandExecutor implements CommandExecutor, SandboxMonitor {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     await this.sweeping;
     try {
+      await this.sessions.closeAll();
       if (this.initialized && this.options.shutdownAction === "stop")
         await this.stopIdleContainers();
     } finally {

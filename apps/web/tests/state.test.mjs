@@ -22,6 +22,30 @@ function apiFixture({ completeReplay = true } = {}) {
   const sequences = new Map();
   const calls = [];
   let postGate;
+  globalThis.WebSocket = class {
+    readyState = 0;
+    constructor(raw) {
+      const url = new URL(raw);
+      const id = url.pathname.split("/")[2];
+      const cursor = url.searchParams.get("after") ?? `${id}:0`;
+      calls.push({ endpoint: "events", eventCursor: cursor });
+      queueMicrotask(() => {
+        if (this.readyState !== 0) return;
+        this.readyState = 1;
+        controllers.set(id, this);
+        this.onopen?.();
+        if (completeReplay) this.emit({ type: "replay_complete", cursor });
+      });
+    }
+    emit(frame) {
+      this.onmessage?.({ data: JSON.stringify(frame) });
+    }
+    close() {
+      if (this.readyState >= 2) return;
+      this.readyState = 3;
+      this.onclose?.({ code: 1000, reason: "" });
+    }
+  };
   globalThis.fetch = async (raw, options = {}) => {
     const url = new URL(raw);
     const parts = url.pathname.split("/");
@@ -31,32 +55,10 @@ function apiFixture({ completeReplay = true } = {}) {
       endpoint,
       method: options.method,
       body: options.body,
-      eventCursor: options.headers?.["Last-Event-ID"],
     });
     if (options.method === "POST" && !id) return Response.json({ id: "created" }, { status: 201 });
     if (options.method === "POST")
       return postGate ? postGate() : Response.json({ runId: "accepted" }, { status: 202 });
-    if (endpoint === "events") {
-      const body = new ReadableStream({
-        start(controller) {
-          controllers.set(id, controller);
-          if (completeReplay)
-            controller.enqueue(
-              new TextEncoder().encode(
-                `event: replay_complete\ndata: ${JSON.stringify({ cursor: options.headers["Last-Event-ID"] })}\n\n`,
-              ),
-            );
-          options.signal.addEventListener(
-            "abort",
-            () => {
-              controller.close();
-            },
-            { once: true },
-          );
-        },
-      });
-      return new Response(body, { headers: { "content-type": "text/event-stream" } });
-    }
     if (endpoint === "pending") return Response.json(pending.get(id) ?? []);
     if (endpoint === "messages") {
       const cursor = url.searchParams.get("cursor");
@@ -94,27 +96,17 @@ function apiFixture({ completeReplay = true } = {}) {
     completeReplay(id) {
       controllers
         .get(id)
-        .enqueue(
-          new TextEncoder().encode(
-            `event: replay_complete\ndata: ${JSON.stringify({ cursor: `${id}:${sequences.get(id) ?? 0}` })}\n\n`,
-          ),
-        );
+        .emit({ type: "replay_complete", cursor: `${id}:${sequences.get(id) ?? 0}` });
     },
     emit(id, payload) {
       const sequence = (sequences.get(id) ?? 0) + 1;
       sequences.set(id, sequence);
-      controllers
-        .get(id)
-        .enqueue(
-          new TextEncoder().encode(
-            `id: ${id}:${sequence}\nevent: ${payload.type}\ndata: ${JSON.stringify(payload)}\n\n`,
-          ),
-        );
+      controllers.get(id).emit({ type: "event", id: `${id}:${sequence}`, event: payload });
     },
   };
 }
 
-test("a terminal SSE event arriving before POST returns never regresses to running", async (t) => {
+test("a terminal WebSocket event arriving before POST returns never regresses to running", async (t) => {
   const original = globalThis.fetch;
   t.after(() => {
     cleanup();
@@ -534,7 +526,10 @@ test("saved delegation renders from the snapshot before subscribing at its water
     if (turn?.messages.length) renders.push(turnContent(turn).map((item) => item.type));
     return model;
   });
-  await waitFor(() => assert(fixture.calls.some((call) => call.endpoint === "events")));
+  await waitFor(() => {
+    assert(fixture.calls.some((call) => call.endpoint === "events"));
+    assert.equal(hook.result.current.activity.phase, "done");
+  });
   assert.equal(fixture.calls.find((call) => call.endpoint === "events").eventCursor, "one:900");
   assert.deepEqual(renders[0], ["delegation", "text"]);
   assert.equal(hook.result.current.activity.phase, "done");

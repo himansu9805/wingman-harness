@@ -9,9 +9,7 @@ import guardModule from "../dist/auth/token.guard.js";
 
 const { SandboxesController } = controllerModule;
 
-test("sandbox APIs authenticate, list owned containers, and stream read-only output", async (t) => {
-  let listener;
-  let unsubscribed = false;
+test("sandbox APIs authenticate, list owned containers, and manage lifecycle", async (t) => {
   const shutdown = new AbortController();
   const agent = {
     shutdownSignal: shutdown.signal,
@@ -20,6 +18,7 @@ test("sandbox APIs authenticate, list owned containers, and stream read-only out
         return [
           {
             threadId: "chat-1",
+            name: "Falcon-a1b2c3d4e5f6",
             containerId: "abc",
             status: "running",
             lastUsedAt: new Date(0).toISOString(),
@@ -27,15 +26,11 @@ test("sandbox APIs authenticate, list owned containers, and stream read-only out
           },
         ];
       },
-      async subscribe(id, callback) {
-        if (id !== "chat-1") throw new Error("not found");
-        listener = callback;
-        return {
-          snapshot: "previous\n",
-          unsubscribe() {
-            unsubscribed = true;
-          },
-        };
+      async stop(id) {
+        return id === "chat-1";
+      },
+      async release(id) {
+        assert.equal(id, "chat-1");
       },
     },
   };
@@ -59,19 +54,12 @@ test("sandbox APIs authenticate, list owned containers, and stream read-only out
   assert.equal((await fetch(base)).status, 401);
   const headers = { authorization: "Bearer sandbox-test-only" };
   const list = await fetch(base, { headers });
-  assert.equal((await list.json()).sandboxes[0].threadId, "chat-1");
-  assert.equal((await fetch(`${base}/other/output`, { headers })).status, 404);
-  assert.equal((await fetch(`${base}/chat-1/output`, { headers, method: "POST" })).status, 404);
-  const abort = new AbortController();
-  const stream = await fetch(`${base}/chat-1/output`, { headers, signal: abort.signal });
-  assert.match(stream.headers.get("content-type"), /text\/event-stream/);
-  const reader = stream.body.getReader();
-  const decoder = new TextDecoder();
-  assert.match(decoder.decode((await reader.read()).value), /previous/);
-  listener("live output\n");
-  assert.match(decoder.decode((await reader.read()).value), /live output/);
-  abort.abort();
-  for (let i = 0; i < 20 && !unsubscribed; i++)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(unsubscribed, true);
+  const sandbox = (await list.json()).sandboxes[0];
+  assert.equal(sandbox.threadId, "chat-1");
+  assert.equal(sandbox.name, "Falcon-a1b2c3d4e5f6");
+  assert.equal((await fetch(`${base}/chat-1/stop`, { method: "POST" })).status, 401);
+  assert.equal((await fetch(`${base}/chat-1/stop`, { headers, method: "POST" })).status, 201);
+  assert.equal((await fetch(`${base}/other/stop`, { headers, method: "POST" })).status, 404);
+  assert.equal((await fetch(`${base}/chat-1`, { headers, method: "DELETE" })).status, 200);
+  assert.equal((await fetch(`${base}/chat-1/output`, { headers })).status, 404);
 });

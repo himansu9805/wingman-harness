@@ -28,7 +28,7 @@ test("loading tool modules does not initialize the graph database", () => {
     const { GraphMemory } = await import(${JSON.stringify(memory)});
     GraphMemory.getInstance = () => { throw new Error('Unexpected memory initialization'); };
     const { createLocalTools } = await import(${JSON.stringify(tools)});
-    createLocalTools([]);
+    createLocalTools([], { target: "sandbox", executeShell: async () => ({}) });
   `;
   const result = spawnSync(
     process.execPath,

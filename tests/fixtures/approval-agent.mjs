@@ -54,6 +54,7 @@ export function createApprovalAgent({ checkpointer = new MemorySaver(), usage } 
       const approved = interrupt({
         kind: "bash_approval",
         command,
+        target: "sandbox",
         execution: {
           agentId: runtime.config.configurable.agent_id,
           taskId: runtime.config.configurable.delegated_task_id ?? null,

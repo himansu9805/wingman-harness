@@ -1,3 +1,4 @@
+import { sandboxExecutor } from "./sandbox-executor.mjs";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import "../setup.mjs";
@@ -9,7 +10,7 @@ import { CoreRuntime } from "../../packages/core/src/runtime/runtime.ts";
 import { assembleAgentModules } from "../../packages/core/src/agents/module.ts";
 import { Agent } from "../../packages/core/src/agents/agent.ts";
 import {
-  operatorAgentDefinition,
+  coderAgentDefinition,
   builtinAgentModules,
 } from "../../packages/core/src/agents/builtins/index.ts";
 import { createLocalTools } from "../../packages/core/src/capabilities/catalogue.ts";
@@ -78,7 +79,8 @@ export async function createDelegationRuntime({
   delegationConcurrency = 4,
   maxConcurrency = 2,
   maxTasks = 8,
-  operatorTools = [],
+  coderTools = [],
+  commandExecutor = sandboxExecutor,
   researchTools = [],
   researchExecution,
   executionResources = [],
@@ -149,20 +151,18 @@ export async function createDelegationRuntime({
         executionResources,
         definitions: [
           definition,
-          ...definitions.filter(
-            (definition) => !["orchestrator", "operator"].includes(definition.id),
-          ),
-          operatorTools.length
+          ...definitions.filter((definition) => !["orchestrator", "coder"].includes(definition.id)),
+          coderTools.length
             ? {
-                ...operatorAgentDefinition,
+                ...coderAgentDefinition,
                 capabilities: {
-                  ...operatorAgentDefinition.capabilities,
-                  useGlobalTools: operatorTools.map((tool) => tool.name),
+                  ...coderAgentDefinition.capabilities,
+                  useGlobalTools: coderTools.map((tool) => tool.name),
                 },
               }
-            : operatorAgentDefinition,
+            : coderAgentDefinition,
         ],
-        globalTools: [...createLocalTools([]), ...operatorTools],
+        globalTools: [...createLocalTools([], commandExecutor), ...coderTools],
         models: {
           fast: model,
           powerful: model,

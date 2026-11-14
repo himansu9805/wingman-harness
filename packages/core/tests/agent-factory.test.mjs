@@ -1,3 +1,4 @@
+import { sandboxExecutor } from "../../../tests/fixtures/sandbox-executor.mjs";
 import { MemoryDelegationStore } from "../src/delegation/storage/store.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -11,7 +12,7 @@ import { Agent } from "../src/agents/agent.ts";
 import { CoreRuntime } from "../src/runtime/runtime.ts";
 import {
   analystAgentDefinition,
-  operatorAgentDefinition,
+  coderAgentDefinition,
   researcherAgentDefinition,
   createOrchestratorAgentDefinition,
 } from "../src/agents/builtins/index.ts";
@@ -58,57 +59,12 @@ const role = (id, capabilities = {}, model = "powerful") => ({
   capabilities: { ...analystAgentDefinition.capabilities, ...capabilities },
 });
 
-test("orchestrator and operator receive the actual shell syntax limits before delegation", async () => {
-  const { runtime, trace } = await fixture({
-    definitions: [
-      createOrchestratorAgentDefinition(),
-      analystAgentDefinition,
-      operatorAgentDefinition,
-      researcherAgentDefinition,
-    ],
-    globalTools: createLocalTools([]),
-  });
-  try {
-    await startTurn(
-      await Agent.create(runtime),
-      "Save a file using a heredoc",
-      "planning-thread",
-      options(),
-    );
-    const orchestrator = trace.models.at(-1);
-    assert.match(
-      orchestrator.prompt,
-      /do not instruct a specialist to use syntax it does not support/i,
-    );
-    assert.match(orchestrator.prompt, /do not claim the file was saved or checked/i);
-    assert.match(
-      orchestrator.toolDescriptions.delegate_task,
-      /operator:.*host execution rejects heredocs, redirection/i,
-    );
-
-    await startTurn(
-      await Agent.create(runtime, "operator"),
-      "Save a file using a heredoc",
-      "operator-thread",
-      options(),
-    );
-    const operator = trace.models.at(-1);
-    assert.match(operator.prompt, /no heredocs, redirection/i);
-    assert.match(operator.prompt, /do not use a shell interpreter or generated code to bypass/i);
-    assert.match(operator.prompt, /instead of claiming a file was saved or verified/i);
-  } finally {
-    await runtime.close();
-  }
-});
 const simpleTool = (name) =>
   tool(async () => name, { name, description: name, schema: z.object({}) });
 
-test("sandbox operators advertise approved shell scripts for file creation", async () => {
+test("sandbox coders advertise approved shell scripts for file creation", async () => {
   const executor = {
     target: "sandbox",
-    async execute() {
-      throw new Error("not used");
-    },
     async executeShell() {
       throw new Error("not used");
     },
@@ -117,12 +73,10 @@ test("sandbox operators advertise approved shell scripts for file creation", asy
     definitions: [
       createOrchestratorAgentDefinition(),
       analystAgentDefinition,
-      operatorAgentDefinition,
+      coderAgentDefinition,
       researcherAgentDefinition,
     ],
     globalTools: createLocalTools([], executor),
-    commandTarget: "sandbox",
-    sandboxShell: true,
   });
   try {
     await startTurn(
@@ -135,16 +89,18 @@ test("sandbox operators advertise approved shell scripts for file creation", asy
     assert.match(planner.prompt, /showing code in a reply is not the same as creating the file/i);
     assert.match(
       planner.toolDescriptions.delegate_task,
-      /operator:.*sandbox mode.*heredocs and redirection.*approval/i,
+      /coder:.*sandbox shell scripts, heredocs and redirection.*approval/i,
     );
     await startTurn(
-      await Agent.create(runtime, "operator"),
+      await Agent.create(runtime, "coder"),
       "Create a Python script",
-      "sandbox-operator",
+      "sandbox-coder",
       options(),
     );
     assert.match(trace.models.at(-1).prompt, /heredocs, pipes and redirection are supported/i);
     assert.match(trace.models.at(-1).prompt, /save it in the sandbox and verify/i);
+    assert.match(trace.models.at(-1).prompt, /files are not the user's host workspace/i);
+    assert.match(trace.models.at(-1).prompt, /run appropriate checks/i);
   } finally {
     await runtime.close();
   }
@@ -157,8 +113,6 @@ async function fixture({
   skills = [],
   respond,
   mcpTools = [],
-  commandTarget = "host",
-  sandboxShell = false,
 } = {}) {
   const trace = { models: [], routing: 0, memory: 0, mcp: [], skills: [], closed: [] };
   const fast = new RecordingModel("fast", trace, respond);
@@ -198,8 +152,6 @@ async function fixture({
         definitions: definitions ?? [role("orchestrator", {}, "routed"), role("analyst")],
         globalTools,
         agentTools,
-        commandTarget,
-        sandboxShell,
         models: { fast, powerful, routingMiddleware },
       };
     },
@@ -420,16 +372,21 @@ test("empty installed skill catalogue does not expose load_skill", async () => {
   }
 });
 
-test("operator graph preserves production shell approval and resume", async () => {
+test("coder graph preserves production shell approval and resume", async () => {
   const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('phase2b')")}`;
   const { runtime, trace } = await fixture({
     definitions: [
       createOrchestratorAgentDefinition(),
       analystAgentDefinition,
-      operatorAgentDefinition,
+      coderAgentDefinition,
       researcherAgentDefinition,
     ],
-    globalTools: createLocalTools([]),
+    globalTools: createLocalTools([], {
+      target: "sandbox",
+      async executeShell() {
+        return { stdout: "phase2b", stderr: "", exit_code: 0 };
+      },
+    }),
     respond(messages) {
       const result = messages.filter(ToolMessage.isInstance).at(-1);
       return result
@@ -448,7 +405,7 @@ test("operator graph preserves production shell approval and resume", async () =
     },
   });
   try {
-    const agent = await Agent.create(runtime, "operator");
+    const agent = await Agent.create(runtime, "coder");
     const paused = await startTurn(agent, "run harmless command", "shell-thread", options());
     assert.equal(paused.kind, "paused");
     const answers = Object.fromEntries(paused.approvals.map((item) => [item.id, true]));

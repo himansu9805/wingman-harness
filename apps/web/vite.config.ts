@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import stylex from "@stylexjs/unplugin";
-import { apiGuard, backendConfig } from "./server/backend.ts";
+import { apiGuard, backendConfig, isAllowedWebSocketOrigin } from "./server/backend.ts";
 
 export default defineConfig(({ mode }) => {
   const webRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -14,26 +14,31 @@ export default defineConfig(({ mode }) => {
   };
   const backend = backendConfig(env);
   const guard = apiGuard(backend);
+  const websocketProxy: ProxyOptions = {
+    target: backend.url,
+    changeOrigin: true,
+    ws: true,
+    rewrite: (path: string) => path.replace(/^\/api/, ""),
+    headers: { Authorization: `Bearer ${backend.token}` },
+    configure(proxy) {
+      proxy.on("proxyReqWs", (upstream, request, socket) => {
+        if (!backend.token || !isAllowedWebSocketOrigin(request)) {
+          upstream.destroy();
+          socket.destroy();
+          return;
+        }
+        upstream.setHeader("Origin", env.WEB_ORIGIN ?? "http://localhost:5173");
+      });
+    },
+  };
   const proxy: Record<string, ProxyOptions> = {
+    "^/api/sandboxes/[\\w-]{1,64}/output/ws(?:\\?|$)": websocketProxy,
+    "^/api/threads/[\\w-]{1,64}/events/ws(?:\\?|$)": websocketProxy,
     "^/api/(threads|tasks|sandboxes)(/|\\?|$)": {
       target: backend.url,
       changeOrigin: true,
       rewrite: (path: string) => path.replace(/^\/api/, ""),
       headers: { Authorization: `Bearer ${backend.token}` },
-      // A persistent event subscription must outlive an ordinary HTTP request.
-      timeout: 0,
-      proxyTimeout: 0,
-      configure(proxy) {
-        proxy.on("proxyRes", (upstream, _request, response) => {
-          if (upstream.headers["content-type"]?.startsWith("text/event-stream")) {
-            // Forward an idle stream's headers immediately, before the first
-            // event/heartbeat. Otherwise a new chat appears stuck connecting.
-            queueMicrotask(() => {
-              if (!response.destroyed && !response.headersSent) response.flushHeaders();
-            });
-          }
-        });
-      },
     },
   };
   return {

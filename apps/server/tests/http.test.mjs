@@ -1,3 +1,5 @@
+import WebSocket from "ws";
+import wsModule from "../dist/threads/thread-events-websocket.js";
 import "reflect-metadata";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -121,6 +123,13 @@ async function server(t, agent, options = {}) {
   })(HttpTestModule);
   app = await NestFactory.create(HttpTestModule, { logger: false });
   app.useGlobalGuards(new TokenGuard());
+  await app.init();
+  wsModule.attachThreadEventsWebSocket(
+    app.getHttpServer(),
+    app.get(AgentService),
+    TOKEN,
+    "http://localhost:5173",
+  );
   await app.listen(0, "127.0.0.1");
   const base = await app.getUrl();
 
@@ -130,7 +139,7 @@ async function server(t, agent, options = {}) {
   ) {
     const controller = new AbortController();
     requests.add(controller);
-    // Keep the deadline active through response body consumption, including SSE.
+    // Keep the deadline active through response body consumption, including response bodies.
     return fetch(`${base}/threads/${path}`, {
       method: method ?? (body === undefined ? "GET" : "POST"),
       headers: {
@@ -154,54 +163,68 @@ async function server(t, agent, options = {}) {
     assert.match(response.headers.get("content-type"), /application\/json/);
     return response.json();
   }
+  async function subscribe(threadId, cursor, authorization = TOKEN) {
+    const url = new URL(`${base}/threads/${threadId}/events/ws`);
+    url.protocol = "ws:";
+    if (cursor !== undefined) url.searchParams.set("after", cursor);
+    const socket = new WebSocket(url, {
+      headers: authorization ? { authorization: `Bearer ${authorization}` } : {},
+    });
+    const queue = [];
+    const waiters = [];
+    let closeResolve;
+    const closed = new Promise((resolve) => {
+      closeResolve = resolve;
+    });
+    socket.on("message", (data) => {
+      const frame = JSON.parse(data.toString());
+      const waiter = waiters.shift();
+      if (waiter) waiter(frame);
+      else queue.push(frame);
+    });
+    socket.on("close", (code) => closeResolve(code));
+    socket.on("error", () => {});
+    await bounded(
+      new Promise((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      }),
+    );
+    return {
+      closed,
+      next: () =>
+        queue.length
+          ? Promise.resolve(queue.shift())
+          : bounded(new Promise((resolve) => waiters.push(resolve))),
+      close: () => socket.terminate(),
+    };
+  }
   async function stream(path, body) {
     const response = await request(path, { body });
     assert.equal(response.status, 202);
     const { runId } = await response.json();
-    const threadId = path.split("/")[0];
-    const subscription = new AbortController();
-    const listener = await request(`${threadId}/events`, { signal: subscription.signal });
-    assert.equal(listener.status, 200);
-    assert.match(listener.headers.get("content-type"), /^text\/event-stream/);
-    const reader = listener.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const subscription = await subscribe(path.split("/")[0]);
     const frames = [];
     try {
       while (true) {
-        const chunk = await reader.read();
-        assert.equal(chunk.done, false, "stream remains open across turns");
-        buffer += decoder.decode(chunk.value, { stream: true });
-        let end;
-        while ((end = buffer.indexOf("\n\n")) >= 0) {
-          const frame = buffer.slice(0, end);
-          buffer = buffer.slice(end + 2);
-          if (frame.startsWith(":")) continue;
-          const parsed = events(frame)[0];
-          if (parsed.data.runId !== runId) continue;
-          assert.ok(
-            Number.isFinite(Date.parse(parsed.data.createdAt)),
-            "SSE events expose durable timestamps",
-          );
-          if (parsed.type === "run") continue; // Existing behavior assertions exclude metadata snapshots.
-          const { runId: ignored, createdAt: timestamp, type: payloadType, ...data } = parsed.data;
-          frames.push({
-            type: parsed.type,
-            data: ["done", "approval", "error"].includes(parsed.type)
-              ? data
-              : { type: payloadType, ...data },
-          });
-          if (["done", "approval", "error"].includes(parsed.type)) return frames;
-        }
+        const frame = await subscription.next();
+        if (frame.type !== "event" || frame.event.runId !== runId) continue;
+        const { runId: ignored, createdAt, type, ...data } = frame.event;
+        assert.ok(Number.isFinite(Date.parse(createdAt)), "Events expose durable timestamps");
+        if (type === "run") continue;
+        frames.push({
+          type,
+          data: ["done", "approval", "error"].includes(type) ? data : { type, ...data },
+        });
+        if (["done", "approval", "error"].includes(type)) return frames;
       }
     } finally {
-      subscription.abort();
-      await reader.cancel().catch(() => {});
-      reader.releaseLock();
+      subscription.close();
     }
   }
   return {
     request,
+    subscribe,
     json,
     stream,
     store,
@@ -214,27 +237,6 @@ async function server(t, agent, options = {}) {
       assert.equal(closed, 1);
     },
   };
-}
-
-function events(text) {
-  return text
-    .trim()
-    .split(/\r?\n\r?\n/)
-    .filter(Boolean)
-    .map((frame) => {
-      const lines = frame.split(/\r?\n/);
-      const event = lines.find((line) => line.startsWith("event: "));
-      assert.ok(event, `missing SSE event in ${frame}`);
-      return {
-        type: event.slice(7),
-        data: JSON.parse(
-          lines
-            .filter((line) => line.startsWith("data: "))
-            .map((line) => line.slice(6))
-            .join("\n"),
-        ),
-      };
-    });
 }
 
 function terminal(frames, type) {
@@ -313,7 +315,7 @@ test("HTTP validates thread ids, messages, and resume bodies", { timeout: TIMEOU
 });
 
 test(
-  "fresh pending is empty and a normal turn ends with SSE done",
+  "fresh pending is empty and a normal turn ends with a done event",
   { timeout: TIMEOUT },
   async (t) => {
     const fixture = await createApprovalAgent();
@@ -586,7 +588,7 @@ test(
 
 for (const confidence of [0, 0.0003665156881398346]) {
   test(
-    `SSE preserves route probabilities and raw confidence ${confidence}`,
+    `WebSocket preserves route probabilities and raw confidence ${confidence}`,
     { timeout: TIMEOUT },
     async (t) => {
       const probabilities = { fast: 0.5112700443976795, powerful: 0.4887299556023205 };
@@ -923,7 +925,7 @@ test(
 );
 
 test(
-  "SSE replays bounded pages, isolates thread cursors, and supports independent reconnects",
+  "WebSocket replays bounded pages, isolates thread cursors, and supports independent reconnects",
   { timeout: TIMEOUT },
   async (t) => {
     const api = await server(
@@ -943,26 +945,24 @@ test(
       "approval:1",
       "garbage",
     ]) {
-      await api.json("fresh/events", { headers: { "last-event-id": cursor } }, 400);
+      const sub = await api.subscribe("fresh", cursor);
+      assert.equal(await bounded(sub.closed), 4400);
     }
-    await api.json("missing/events", undefined, 404);
-    await api.json("fresh/events", { authorization: null }, 401);
+    const missing = await api.subscribe("missing");
+    assert.equal(await bounded(missing.closed), 4404);
+    const unauthorized = await api.subscribe("fresh", undefined, null);
+    assert.equal(await bounded(unauthorized.closed), 4401);
     async function readCount(cursor, count) {
-      const response = await api.request("fresh/events", {
-        headers: { "last-event-id": `fresh:${cursor}` },
-      });
-      assert.equal(response.status, 200);
-      const reader = response.body.getReader();
-      let text = "";
+      const sub = await api.subscribe("fresh", `fresh:${cursor}`);
+      const ids = [];
       try {
-        while ((text.match(/event: done/g) ?? []).length < count) {
-          const chunk = await reader.read();
-          assert.equal(chunk.done, false);
-          text += new TextDecoder().decode(chunk.value);
+        while (ids.length < count) {
+          const frame = await sub.next();
+          if (frame.type === "event") ids.push(Number(frame.id.split(":")[1]));
         }
-        return [...text.matchAll(/^id: fresh:(\d+)$/gm)].map((m) => Number(m[1]));
+        return ids;
       } finally {
-        await reader.cancel();
+        sub.close();
       }
     }
     const [all, reconnect] = await Promise.all([readCount(0, 205), readCount(200, 5)]);
@@ -991,11 +991,12 @@ test(
       }),
     );
     const { runId } = await api.json("disconnect/messages", { body: { message: "hello" } }, 202);
-    const response = await api.request("disconnect/events");
-    const reader = response.body.getReader();
-    const chunk = await reader.read();
-    assert.match(new TextDecoder().decode(chunk.value), /event: route/);
-    await reader.cancel();
+    const subscription = await api.subscribe("disconnect");
+    let frame;
+    do {
+      frame = await subscription.next();
+    } while (frame.type !== "event" || frame.event.type !== "route");
+    subscription.close();
     assert.equal(signal.aborted, false);
     gate.resolve();
     await bounded(
@@ -1008,14 +1009,14 @@ test(
           await new Promise((resolve) => setTimeout(resolve, 10));
       })(),
     );
-    const replay = await api.request("disconnect/events", {
-      headers: { "last-event-id": "disconnect:1" },
-    });
-    const replayReader = replay.body.getReader();
+    const replay = await api.subscribe("disconnect", "disconnect:1");
     try {
-      assert.match(new TextDecoder().decode((await replayReader.read()).value), /event: done/);
+      let frame;
+      do {
+        frame = await replay.next();
+      } while (frame.type !== "event" || frame.event.type !== "done");
     } finally {
-      await replayReader.cancel();
+      replay.close();
     }
   },
 );
@@ -1026,12 +1027,9 @@ test(
   async (t) => {
     const api = await server(t, createApprovalAgent().agent);
     await api.stream("fresh/messages", { message: "hello" });
-    const response = await api.request("fresh/events", { headers: { "last-event-id": "fresh:1" } });
-    const reader = response.body.getReader();
+    const subscription = await api.subscribe("fresh", "fresh:1");
     assert.equal((await api.request("fresh", { method: "DELETE" })).status, 204);
-    while (!(await reader.read()).done) {
-      /* Drain already-buffered metadata before EOF. */
-    }
+    assert.equal(await bounded(subscription.closed), 4404);
     assert.deepEqual(await api.journal.listAfter("fresh", "0", 100), []);
   },
 );
@@ -1064,16 +1062,13 @@ test(
     };
     await api.json("fresh/messages", { body: { message: "hello" } }, 202);
     await bounded(entered.promise);
-    const subscription = await api.request("independent/events");
-    const reader = subscription.body.getReader();
+    const subscription = await api.subscribe("independent");
     await api.close();
     assert.equal(signal.aborted, true);
     assert.deepEqual(terminal, { type: "error", message: "Server stopped the turn" });
     assert.ok(interrupted.finishedAt);
     assert.ok(interrupted.turn.completedAt);
-    while (!(await reader.read()).done) {
-      /* Drain already-buffered metadata before EOF. */
-    }
+    await bounded(subscription.closed);
   },
 );
 
@@ -1213,23 +1208,20 @@ test(
     await api.json("approval/runs?limit=101", undefined, 400);
     await api.json("missing/runs", undefined, 404);
     await api.json("approval/runs", { authorization: null }, 401);
-    // Replay the actual SSE transport and compare its final snapshot to the read API.
-    const response = await api.request("approval/events");
-    const reader = response.body.getReader();
-    let text = "";
+    const subscription = await api.subscribe("approval");
+    const replay = [];
     try {
-      while (!text.includes("event: done\n")) {
-        const chunk = await reader.read();
-        assert.equal(chunk.done, false);
-        text += new TextDecoder().decode(chunk.value);
+      while (true) {
+        const frame = await subscription.next();
+        if (frame.type !== "event") continue;
+        if (frame.event.type === "run" && frame.event.runId === done.runId)
+          replay.push(frame.event);
+        if (frame.event.type === "done" && frame.event.runId === done.runId) break;
       }
-      const replay = events(text).filter(
-        (event) => event.type === "run" && event.data.runId === done.runId,
-      );
-      assert.deepEqual(replay.at(-1).data.metadata, done);
-      assert.ok(replay.every((event) => Number.isFinite(Date.parse(event.data.createdAt))));
+      assert.deepEqual(replay.at(-1).metadata, done);
+      assert.ok(replay.every((event) => Number.isFinite(Date.parse(event.createdAt))));
     } finally {
-      await reader.cancel();
+      subscription.close();
     }
   },
 );
@@ -1358,7 +1350,7 @@ for (const approved of [true, false])
       );
       const { ToolMessage } = await import("@langchain/core/messages");
       const f = await createDelegationRuntime({
-        args: { agentId: "operator", objective: "Check uptime", context: "" },
+        args: { agentId: "coder", objective: "Check uptime", context: "" },
         child: async (messages) => {
           const result = messages.find(ToolMessage.isInstance);
           return result
@@ -1378,7 +1370,7 @@ for (const approved of [true, false])
       const frames = await api.stream("fresh/messages", { message: "delegate uptime" });
       const { approvals } = terminal(frames, "approval");
       assert.equal(approvals.length, 1);
-      assert.equal(approvals[0].execution.agentId, "operator");
+      assert.equal(approvals[0].execution.agentId, "coder");
       assert.equal(approvals[0].execution.toolCallId, "worker-command");
       const [task] = await f.store.listConversation("fresh");
       assert.equal(approvals[0].execution.taskId, task.taskId);
@@ -1395,7 +1387,7 @@ for (const approved of [true, false])
       const journal = await api.journal.listAfter("fresh", "0", 100);
       assert.ok(
         journal.some(
-          (row) => row.payload.type === "agent_activity" && row.payload.agentId === "operator",
+          (row) => row.payload.type === "agent_activity" && row.payload.agentId === "coder",
         ),
       );
       const metadata = journal.filter((row) => row.payload.type === "run").at(-1).payload.metadata;
@@ -1433,7 +1425,7 @@ test(
         },
         {
           key: "review",
-          agentId: "operator",
+          agentId: "coder",
           objective: "Review supplied findings",
           context: "",
           expectedResult: "Review",
@@ -1466,21 +1458,15 @@ test(
       latest.payload.tasks.reduce((sum, task) => sum + task.usage.totalTokens, 0),
       21,
     );
-    const replay = await api.request("fresh/events", {
-      headers: { "last-event-id": `fresh:${BigInt(latest.sequence) - 1n}` },
-    });
-    const reader = replay.body.getReader();
-    let text = "";
+    const replay = await api.subscribe("fresh", `fresh:${BigInt(latest.sequence) - 1n}`);
     try {
-      while (!/event: delegation_plan\ndata: (.+)\n\n/.test(text)) {
-        const chunk = await reader.read();
-        assert.equal(chunk.done, false);
-        text += new TextDecoder().decode(chunk.value);
-      }
-      const snapshot = JSON.parse(text.match(/event: delegation_plan\ndata: (.+)\n\n/)[1]);
-      assert.deepEqual(snapshot.tasks, latest.payload.tasks);
+      let frame;
+      do {
+        frame = await replay.next();
+      } while (frame.type !== "event" || frame.event.type !== "delegation_plan");
+      assert.deepEqual(frame.event.tasks, latest.payload.tasks);
     } finally {
-      await reader.cancel();
+      replay.close();
     }
     assert.equal(
       f.trace.calls.filter((call) => call.child).length,
@@ -1534,7 +1520,7 @@ test(
     );
     const { ToolMessage } = await import("@langchain/core/messages");
     const f = await createDelegationRuntime({
-      args: { agentId: "operator", objective: "Check uptime", context: "" },
+      args: { agentId: "coder", objective: "Check uptime", context: "" },
       child: async (messages) =>
         messages.some(ToolMessage.isInstance)
           ? "declined"
@@ -1559,7 +1545,7 @@ test(
     await dispatch({ jobId: "scheduled-plan", prompt: "delegate uptime", threadId: "fresh" });
     const pending = await api.json("fresh/pending");
     assert.equal(pending.length, 1);
-    assert.equal(pending[0].execution.agentId, "operator");
+    assert.equal(pending[0].execution.agentId, "coder");
     const [task] = await f.store.listConversation("fresh");
     assert.equal(task.schedulerThreadId, "fresh");
     const paused = (await api.json("fresh/runs")).runs[0];
@@ -1636,23 +1622,21 @@ test(
       }
       return listAfter(...args);
     };
-    const response = await api.request("fresh/events");
-    const reader = response.body.getReader();
-    let text = "";
+    const subscription = await api.subscribe("fresh");
+    const frames = [];
     try {
-      while (!text.includes('"text":"live"')) {
-        const chunk = await reader.read();
-        assert.equal(chunk.done, false);
-        text += new TextDecoder().decode(chunk.value);
+      while (true) {
+        const frame = await subscription.next();
+        frames.push(frame);
+        if (frame.type === "event" && frame.event.text === "live") break;
       }
-      const frames = events(text);
       const boundary = frames.findIndex((frame) => frame.type === "replay_complete");
       assert.equal(boundary, 205);
-      assert.deepEqual(frames[boundary].data, { cursor: "fresh:205" });
-      assert.equal(frames[boundary + 1].data.text, "live");
+      assert.equal(frames[boundary].cursor, "fresh:205");
+      assert.equal(frames[boundary + 1].event.text, "live");
       assert.equal(frames.filter((frame) => frame.type === "replay_complete").length, 1);
     } finally {
-      await reader.cancel();
+      subscription.close();
     }
   },
 );
@@ -1662,15 +1646,11 @@ test(
   { timeout: TIMEOUT },
   async (t) => {
     const api = await server(t);
-    const response = await api.request("fresh/events");
-    const reader = response.body.getReader();
+    const subscription = await api.subscribe("fresh");
     try {
-      const chunk = await reader.read();
-      assert.deepEqual(events(new TextDecoder().decode(chunk.value)), [
-        { type: "replay_complete", data: { cursor: "fresh:0" } },
-      ]);
+      assert.deepEqual(await subscription.next(), { type: "replay_complete", cursor: "fresh:0" });
     } finally {
-      await reader.cancel();
+      subscription.close();
     }
   },
 );

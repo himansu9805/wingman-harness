@@ -1,24 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Text } from "@astryxdesign/core/Text";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
-import { RefreshCw, TerminalSquare } from "lucide-react";
+import { RefreshCw, TerminalSquare, MoreHorizontal } from "lucide-react";
 import { Icon } from "@astryxdesign/core/Icon";
 import * as stylex from "@stylexjs/stylex";
 import type { Thread } from "../../../shared/contracts/types";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { MoreMenu } from "@astryxdesign/core/MoreMenu";
+import { SandboxTerminal } from "./SandboxTerminal";
 
 interface Sandbox {
   threadId: string;
+  name: string;
   containerId: string | null;
   status: "running" | "stopped" | "missing" | "expired" | "provisioning" | "unavailable";
+  sessionStatus: "ready" | "running" | "needs_reset" | "inactive" | "remote" | "unavailable";
   createdAt: string | null;
   lastUsedAt: string;
   expiredAt: string | null;
 }
+
+const statusVariants: Record<Sandbox["status"], "green" | "neutral" | "orange" | "red" | "blue"> = {
+  running: "green",
+  stopped: "neutral",
+  missing: "orange",
+  expired: "orange",
+  provisioning: "blue",
+  unavailable: "red",
+};
 
 /** Display Wingman-owned containers and their read-only live command output. */
 export function SandboxView({ threads }: { threads: Thread[] }) {
@@ -27,6 +40,8 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [action, setAction] = useState<{ threadId: string; kind: "stop" | "remove" } | null>(null);
+  const [actionPending, setActionPending] = useState(false);
   const request = useRef<AbortController | null>(null);
   const refresh = useCallback(async (quiet = false) => {
     request.current?.abort();
@@ -63,6 +78,26 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
     };
   }, [refresh]);
   const selectedSandbox = sandboxes.find((item) => item.threadId === selected);
+  const performAction = async () => {
+    if (!action || actionPending) return;
+    setActionPending(true);
+    try {
+      const path = `/api/sandboxes/${encodeURIComponent(action.threadId)}`;
+      const response = await fetch(action.kind === "stop" ? `${path}/stop` : path, {
+        method: action.kind === "stop" ? "POST" : "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      setAction(null);
+      if (selected === action.threadId) setSelected(null);
+      await refresh(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update sandbox");
+      setAction(null);
+    } finally {
+      setActionPending(false);
+    }
+  };
   return (
     <VStack gap={6} width="100%" xstyle={styles.page}>
       <HStack gap={3} hAlign="between" vAlign="center" wrap="wrap">
@@ -85,7 +120,7 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
         <Banner
           status="warning"
           title="Sandbox execution is disabled"
-          description="Set COMMAND_EXECUTION_TARGET=sandbox and restart the server."
+          description="Sandbox monitoring is unavailable. Check the server configuration."
         />
       )}
       {error && (
@@ -98,173 +133,174 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
         <Text type="supporting">Showing the 100 most recently used sandboxes.</Text>
       )}
       {sandboxes.length > 0 && (
-        <div {...stylex.props(styles.layout)}>
-          <div {...stylex.props(styles.list)} aria-label="Sandboxes">
+        <VStack gap={4} width="100%">
+          <List
+            hasDividers
+            density="spacious"
+            edge="padded"
+            aria-label="Sandboxes"
+            xstyle={styles.list}
+          >
             {sandboxes.map((item) => {
               const title =
-                threads.find((thread) => thread.id === item.threadId)?.title ??
+                threads.find((thread) => thread.id === item.threadId)?.title ||
                 `Conversation ${item.threadId.slice(0, 8)}`;
+              const container = item.containerId
+                ? `Container ${item.containerId.slice(0, 12)}`
+                : "No container";
+              const created = item.createdAt
+                ? `Created ${new Date(item.createdAt).toLocaleString()}`
+                : "Creation time unavailable";
               return (
-                <button
-                  type="button"
+                <ListItem
                   key={item.threadId}
-                  onClick={() => setSelected(item.threadId)}
-                  aria-pressed={selected === item.threadId}
-                  {...stylex.props(styles.item, selected === item.threadId && styles.itemSelected)}
-                >
-                  <span {...stylex.props(styles.itemTitle)}>{title}</span>
-                  <span {...stylex.props(styles.metadata)}>
-                    {item.status} ·{" "}
-                    {item.containerId ? item.containerId.slice(0, 12) : "No container"}
-                  </span>
-                  <span {...stylex.props(styles.metadata)}>
-                    Last used {new Date(item.lastUsedAt).toLocaleString()}
-                  </span>
-                </button>
+                  align="center"
+                  startContent={
+                    <HStack vAlign="center" hAlign="center" xstyle={styles.sandboxIcon}>
+                      <Icon icon={TerminalSquare} />
+                    </HStack>
+                  }
+                  label={
+                    <Text weight="medium" maxLines={2}>
+                      {item.name}
+                    </Text>
+                  }
+                  description={
+                    <Text type="supporting" maxLines={2}>
+                      {title} · {container} · {created}
+                    </Text>
+                  }
+                  endContent={
+                    <HStack gap={3} vAlign="center" xstyle={styles.rowEnd}>
+                      {item.sessionStatus === "needs_reset" && (
+                        <Badge label="Reset required" variant="orange" />
+                      )}
+                      <Badge
+                        label={item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                        variant={statusVariants[item.status]}
+                      />
+                      <Button
+                        label="View output"
+                        variant="ghost"
+                        onClick={() => setSelected(item.threadId)}
+                      />
+                      <MoreMenu
+                        label={`Sandbox actions for ${item.name}`}
+                        icon={<Icon icon={MoreHorizontal} />}
+                        alignment="end"
+                        presentation="adaptive"
+                        items={[
+                          {
+                            label: "Stop container",
+                            isDisabled: item.status !== "running",
+                            onClick: () => setAction({ threadId: item.threadId, kind: "stop" }),
+                          },
+                          {
+                            label: "Remove container",
+                            variant: "destructive",
+                            onClick: () => setAction({ threadId: item.threadId, kind: "remove" }),
+                          },
+                        ]}
+                      />
+                    </HStack>
+                  }
+                />
               );
             })}
-          </div>
-          <div {...stylex.props(styles.details)}>
-            {selectedSandbox ? (
-              <>
-                <HStack gap={2} vAlign="center">
-                  <Icon icon={TerminalSquare} />
-                  <Text weight="medium">Command output</Text>
-                  <Text type="supporting">Read-only · {selectedSandbox.status}</Text>
-                </HStack>
-                <Text type="supporting">
-                  {selectedSandbox.createdAt &&
-                    `Created ${new Date(selectedSandbox.createdAt).toLocaleString()} · `}
-                  Last used {new Date(selectedSandbox.lastUsedAt).toLocaleString()}
-                </Text>
-                {selectedSandbox.expiredAt && (
-                  <Text type="supporting">
-                    Expired {new Date(selectedSandbox.expiredAt).toLocaleString()} · Temporary files
-                    were removed.
-                  </Text>
+          </List>
+          {selectedSandbox && (
+            <Dialog
+              isOpen
+              purpose="info"
+              width={800}
+              padding={4}
+              onOpenChange={(open) => {
+                if (!open) setSelected(null);
+              }}
+            >
+              <DialogHeader
+                title="Sandbox output"
+                subtitle={
+                  threads.find((thread) => thread.id === selectedSandbox.threadId)?.title ||
+                  `Conversation ${selectedSandbox.threadId.slice(0, 8)}`
+                }
+                onOpenChange={(open) => {
+                  if (!open) setSelected(null);
+                }}
+              />
+              <VStack gap={3} width="100%">
+                {selectedSandbox.sessionStatus === "needs_reset" && (
+                  <Banner
+                    status="warning"
+                    title="Sandbox reset required"
+                    description="A previous command has an uncertain outcome. Stop or remove the sandbox before running another command."
+                  />
                 )}
-                <Text type="supporting">
-                  Recent output is retained only while the server is running. Commands run through
-                  Wingman, not this view.
-                </Text>
                 <SandboxTerminal threadId={selectedSandbox.threadId} />
-              </>
-            ) : (
-              <Text type="supporting">Select a sandbox to view its output.</Text>
-            )}
-          </div>
-        </div>
+              </VStack>
+            </Dialog>
+          )}
+        </VStack>
+      )}
+      {action && (
+        <Dialog
+          isOpen
+          purpose="form"
+          padding={6}
+          onOpenChange={(open) => {
+            if (!open && !actionPending) setAction(null);
+          }}
+        >
+          <DialogHeader
+            title={action.kind === "stop" ? "Stop this sandbox?" : "Remove this sandbox?"}
+          />
+          <VStack gap={4}>
+            <Text>
+              Temporary files in this sandbox will be lost. The conversation will remain available.
+            </Text>
+            <Text type="supporting">
+              {action.kind === "stop"
+                ? "A later command will restart the sandbox."
+                : "A later command will create a new sandbox."}
+            </Text>
+            <Text type="supporting">
+              Wingman waits for any active command to finish before continuing.
+            </Text>
+            <HStack gap={3} hAlign="end">
+              <Button
+                label="Cancel"
+                variant="ghost"
+                isDisabled={actionPending}
+                onClick={() => setAction(null)}
+              />
+              <Button
+                label={action.kind === "stop" ? "Stop container" : "Remove container"}
+                isLoading={actionPending}
+                onClick={() => void performAction()}
+              />
+            </HStack>
+          </VStack>
+        </Dialog>
       )}
     </VStack>
   );
 }
 
-/** Attach a terminal renderer to the read-only output stream, disposing it on navigation. */
-function SandboxTerminal({ threadId }: { threadId: string }) {
-  const element = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState("Connecting…");
-  useEffect(() => {
-    if (!element.current) return;
-    const terminal = new Terminal({
-      disableStdin: true,
-      convertEol: true,
-      cursorBlink: false,
-      scrollback: 3000,
-      fontSize: 13,
-      theme: { background: "#141414", foreground: "#e5e5e5" },
-    });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
-    terminal.open(element.current);
-    terminal.textarea?.setAttribute("readonly", "");
-    terminal.textarea?.setAttribute("aria-label", "Read-only sandbox terminal");
-    fit.fit();
-    const observer = new ResizeObserver(() => {
-      try {
-        fit.fit();
-      } catch {
-        /* Hidden during layout. */
-      }
-    });
-    observer.observe(element.current);
-    const source = new EventSource(`/api/sandboxes/${encodeURIComponent(threadId)}/output`);
-    let placeholder = false;
-    source.onopen = () => {
-      terminal.reset();
-      placeholder = false;
-      setStatus("Live");
-    };
-    source.onerror = () => setStatus("Reconnecting…");
-    source.addEventListener("output", (event) => {
-      try {
-        const value = JSON.parse((event as MessageEvent).data) as { text?: unknown };
-        if (typeof value.text === "string") {
-          if (!value.text) {
-            terminal.writeln("Waiting for command output…");
-            placeholder = true;
-          } else {
-            if (placeholder) terminal.reset();
-            placeholder = false;
-            terminal.write(value.text);
-          }
-        }
-      } catch {
-        setStatus("Invalid output received");
-      }
-    });
-    return () => {
-      source.close();
-      observer.disconnect();
-      terminal.dispose();
-    };
-  }, [threadId]);
-  return (
-    <>
-      <Text type="supporting" role="status">
-        {status}
-      </Text>
-      <div ref={element} aria-label="Read-only sandbox output" {...stylex.props(styles.terminal)} />
-    </>
-  );
-}
-
 const styles = stylex.create({
-  page: { padding: "var(--spacing-6)", maxWidth: 1200, marginInline: "auto" },
+  page: { padding: "var(--spacing-8)", maxWidth: 1200, marginInline: "auto" },
   heading: { fontSize: "calc(var(--text-large-size) * 1.5)", lineHeight: 1.3 },
-  layout: {
-    display: "grid",
-    gridTemplateColumns: {
-      default: "minmax(0, 1fr)",
-      "@media (min-width: 850px)": "minmax(240px, 320px) minmax(0, 1fr)",
-    },
-    gap: "var(--spacing-4)",
-    width: "100%",
-  },
-  list: { display: "flex", flexDirection: "column", gap: "var(--spacing-2)" },
-  item: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: "var(--spacing-1)",
-    padding: "var(--spacing-3)",
+  list: {
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-container)",
-    backgroundColor: "transparent",
-    color: "var(--color-text-primary)",
-    textAlign: "left",
-    cursor: "pointer",
+    overflow: "hidden",
     width: "100%",
   },
-  itemSelected: { backgroundColor: "var(--color-background-muted)" },
-  itemTitle: { fontWeight: 600 },
-  metadata: { color: "var(--color-text-secondary)", fontSize: "var(--text-supporting-size)" },
-  details: { display: "flex", flexDirection: "column", gap: "var(--spacing-3)", minWidth: 0 },
-  terminal: {
-    height: 360,
-    minWidth: 0,
-    padding: "var(--spacing-3)",
-    backgroundColor: "#141414",
+  sandboxIcon: {
+    width: "var(--spacing-10)",
+    height: "var(--spacing-10)",
     borderRadius: "var(--radius-container)",
-    overflow: "hidden",
+    backgroundColor: "var(--color-background-muted)",
+    flexShrink: 0,
   },
+  rowEnd: { flexShrink: 0 },
 });

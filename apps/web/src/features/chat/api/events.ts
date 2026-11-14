@@ -1,53 +1,6 @@
 import { ApiError } from "../../../shared/api/connection";
 import type { Connection, ThreadEvent } from "../../../shared/contracts/types";
 
-export interface EventFrame {
-  id: string;
-  event: string;
-  data: string;
-}
-
-/** Incremental SSE parser: chunk boundaries may split lines, CRLF or UTF-8 text. */
-export class EventParser {
-  private buffer = "";
-  private data: string[] = [];
-  private id = "";
-  private event = "";
-  private size = 0;
-  /** Create a parser that emits each complete SSE frame to the supplied callback. */
-  constructor(private readonly emit: (frame: EventFrame) => void) {}
-  /** Consume decoded text, retain incomplete lines, and reject oversized events. */
-  push(chunk: string) {
-    this.buffer += chunk;
-    if (this.buffer.length > 1_000_000) throw new Error("Event exceeded the size limit.");
-    let end: number;
-    while ((end = this.buffer.search(/[\r\n]/)) >= 0) {
-      if (this.buffer[end] === "\r" && end === this.buffer.length - 1) break;
-      const line = this.buffer.slice(0, end);
-      const length = this.buffer[end] === "\r" && this.buffer[end + 1] === "\n" ? 2 : 1;
-      this.buffer = this.buffer.slice(end + length);
-      if (!line) {
-        if (this.data.length)
-          this.emit({ id: this.id, event: this.event || "message", data: this.data.join("\n") });
-        this.data = [];
-        this.event = "";
-        this.size = 0;
-      } else if (!line.startsWith(":")) {
-        const colon = line.indexOf(":");
-        const field = colon < 0 ? line : line.slice(0, colon);
-        const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
-        if (field === "data") {
-          this.data.push(value);
-          this.size += value.length;
-        }
-        if (field === "event") this.event = value;
-        if (field === "id" && !value.includes("\0")) this.id = value;
-      }
-      if (this.size > 1_000_000) throw new Error("Event exceeded the size limit.");
-    }
-  }
-}
-
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "offline";
 interface WatchOptions {
   connection: Connection;
@@ -60,7 +13,7 @@ interface WatchOptions {
   onReplayComplete?: () => void;
   onStatus: (status: StreamStatus) => void;
   onError: (error: Error) => void;
-  fetcher?: typeof fetch;
+  socketFactory?: (url: string) => WebSocket;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 /** Wait before reconnecting; reject promptly when the subscription is aborted. */
@@ -89,52 +42,92 @@ export async function watchEvents(options: WatchOptions): Promise<void> {
   let connected = false;
   let retry = 1_000;
   while (!signal.aborted) {
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let socket: WebSocket | undefined;
     try {
       onStatus(connected ? "reconnecting" : "connecting");
       connected = true;
-      const response = await (options.fetcher ?? fetch)(
-        `${connection.url}/threads/${encodeURIComponent(threadId)}/events`,
-        {
-          headers: cursor ? { "Last-Event-ID": cursor } : {},
-          credentials: "same-origin",
-          signal,
-        },
+      const base = typeof window === "undefined" ? "http://localhost" : window.location.href;
+      const url = new URL(
+        `${connection.url}/threads/${encodeURIComponent(threadId)}/events/ws`,
+        base,
       );
-      if (!response.ok)
-        throw new ApiError(response.status, `Event connection failed (${response.status}).`);
-      if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body)
-        throw new Error("Server did not return an event stream.");
-      reader = response.body.getReader();
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      if (cursor) url.searchParams.set("after", cursor);
       let replaying = true;
-      retry = 1_000;
-      const decoder = new TextDecoder();
-      const parser = new EventParser((frame) => {
-        if (frame.event === "replay_complete") {
-          const boundary = JSON.parse(frame.data) as { cursor?: unknown };
-          if (!replaying || boundary.cursor !== (cursor || `${threadId}:0`))
-            throw new Error("Invalid replay boundary.");
-          replaying = false;
-          options.onReplayComplete?.();
-          onStatus("live");
-          return;
-        }
-        if (!frame.id.startsWith(`${threadId}:`))
-          throw new Error("Event belongs to another thread.");
-        const sequence = frame.id.slice(threadId.length + 1);
-        if (!/^[1-9]\d{0,18}$/.test(sequence)) throw new Error("Invalid event ID.");
-        if (cursor && BigInt(sequence) <= BigInt(cursor.slice(threadId.length + 1))) return;
-        const payload = JSON.parse(frame.data) as ThreadEvent;
-        if (payload.type !== frame.event || typeof payload.runId !== "string")
-          throw new Error("Invalid event payload.");
-        onEvent({ ...payload, sequence }, frame.id, replaying);
-        cursor = frame.id;
+      await new Promise<void>((resolve, reject) => {
+        socket = (options.socketFactory ?? ((address) => new WebSocket(address)))(url.href);
+        const current = socket;
+        let settled = false;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", abort);
+          if (current.readyState < 2) current.close();
+          error ? reject(error) : resolve();
+        };
+        const abort = () => finish();
+        signal.addEventListener("abort", abort, { once: true });
+        current.onopen = () => {
+          retry = 1_000;
+        };
+        current.onmessage = (message) => {
+          if (settled) return;
+          try {
+            if (typeof message.data !== "string" || message.data.length > 1_000_000)
+              throw new Error("Invalid event frame.");
+            const frame = JSON.parse(message.data) as {
+              type?: string;
+              cursor?: unknown;
+              id?: unknown;
+              event?: ThreadEvent;
+              status?: unknown;
+              message?: unknown;
+            };
+            if (frame.type === "stream_error") {
+              if (typeof frame.status !== "number") throw new Error("Invalid stream error.");
+              finish(
+                new ApiError(
+                  frame.status,
+                  typeof frame.message === "string" ? frame.message : "Event connection failed.",
+                ),
+              );
+              return;
+            }
+            if (frame.type === "replay_complete") {
+              if (!replaying || frame.cursor !== (cursor || `${threadId}:0`))
+                throw new Error("Invalid replay boundary.");
+              replaying = false;
+              options.onReplayComplete?.();
+              onStatus("live");
+              return;
+            }
+            if (
+              frame.type !== "event" ||
+              typeof frame.id !== "string" ||
+              !frame.id.startsWith(`${threadId}:`)
+            )
+              throw new Error("Event belongs to another thread.");
+            const sequence = frame.id.slice(threadId.length + 1);
+            if (!/^[1-9]\d{0,18}$/.test(sequence)) throw new Error("Invalid event ID.");
+            if (cursor && BigInt(sequence) <= BigInt(cursor.slice(threadId.length + 1))) return;
+            const payload = frame.event;
+            if (!payload || typeof payload.type !== "string" || typeof payload.runId !== "string")
+              throw new Error("Invalid event payload.");
+            onEvent({ ...payload, sequence }, frame.id, replaying);
+            cursor = frame.id;
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error("Invalid event frame."));
+          }
+        };
+        current.onerror = () => {};
+        current.onclose = (event) => {
+          if (signal.aborted) finish();
+          else if ([4400, 4401, 4403, 4404].includes(event.code))
+            finish(new ApiError(event.code - 4000, event.reason || "Event connection rejected."));
+          else finish(new Error("Event connection closed."));
+        };
+        if (signal.aborted) abort();
       });
-      while (!signal.aborted) {
-        const chunk = await reader.read();
-        if (chunk.done) throw new Error("Event connection closed.");
-        parser.push(decoder.decode(chunk.value, { stream: true }));
-      }
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof ApiError && [400, 401, 403, 404].includes(error.status)) {
@@ -144,8 +137,9 @@ export async function watchEvents(options: WatchOptions): Promise<void> {
       }
       onStatus("reconnecting");
     } finally {
-      await reader?.cancel().catch(() => {});
+      if (socket && socket.readyState < 2) socket.close();
     }
+    if (signal.aborted) return;
     try {
       await (options.wait ?? wait)(retry, signal);
     } catch {

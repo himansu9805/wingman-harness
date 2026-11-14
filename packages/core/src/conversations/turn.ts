@@ -96,11 +96,7 @@ export type TurnResult =
  * @param message The AI message containing tool calls.
  * @param onEvent Receives one event per tool call.
  */
-async function emitToolCalls(
-  message: AIMessage,
-  onEvent: TurnEventHandler,
-  commandTarget: "host" | "sandbox",
-): Promise<void> {
+async function emitToolCalls(message: AIMessage, onEvent: TurnEventHandler): Promise<void> {
   for (const call of message.tool_calls ?? []) {
     const identity = call.id ? { toolCallId: call.id } : {};
 
@@ -119,7 +115,7 @@ async function emitToolCalls(
         type: "tool_call",
         name: call.name,
         args: call.args,
-        ...(call.name === "exec_bash_command" ? { target: commandTarget } : {}),
+        ...(call.name === "exec_bash_command" ? { target: "sandbox" } : {}),
         ...identity,
       });
     }
@@ -251,7 +247,7 @@ export async function runTurn(
       await onModelUsage(modelUsage(message), message.id);
     }
     if (message.tool_calls && message.tool_calls.length > 0) {
-      await emitToolCalls(message, onEvent, agent.commandTarget ?? "host");
+      await emitToolCalls(message, onEvent);
     } else {
       finalMessage = message;
     }
@@ -377,9 +373,8 @@ export async function resumeTurn(
   options: TurnOptions,
 ): Promise<TurnResult> {
   const interrupts = await nativeApprovals(agent, threadId);
-  const target = agent.commandTarget ?? "host";
   for (const approval of pendingApprovals(interrupts)) {
-    if (answers[approval.id] === true && approval.target !== target) {
+    if (answers[approval.id] === true && approval.target !== "sandbox") {
       throw new Error("Command execution target changed since approval was requested");
     }
   }

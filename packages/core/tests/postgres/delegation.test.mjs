@@ -167,7 +167,7 @@ test(
             },
           ];
     };
-    const args = { agentId: "operator", objective: "Check uptime", context: "" };
+    const args = { agentId: "coder", objective: "Check uptime", context: "" };
     const pausedRuntime = await open(worker, args);
     assert.equal(
       (
@@ -270,7 +270,7 @@ test(
         },
         {
           key: "inspect",
-          agentId: "operator",
+          agentId: "coder",
           objective: "Inspect",
           context: "",
           expectedResult: "Command output",
