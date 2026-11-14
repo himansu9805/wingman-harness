@@ -15,7 +15,13 @@ function lifecycleColor(kind: string | undefined, exitCode: number | undefined):
 }
 
 /** Attach a terminal renderer to the read-only output stream, disposing it on navigation. */
-export function SandboxTerminal({ threadId }: { threadId: string }) {
+export function SandboxTerminal({
+  threadId,
+  containerId,
+}: {
+  threadId: string;
+  containerId: string | null;
+}) {
   const element = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState("Connecting…");
   useEffect(() => {
@@ -141,7 +147,9 @@ export function SandboxTerminal({ threadId }: { threadId: string }) {
   return (
     <VStack gap={2} width="100%">
       <HStack hAlign="between" vAlign="center" xstyle={styles.terminalMeta}>
-        <Text type="supporting">Read-only terminal</Text>
+        <Text type="supporting">
+          Read-only terminal{containerId ? ` · Container ${containerId.slice(0, 12)}` : ""}
+        </Text>
         <Text type="supporting" role="status">
           {status}
         </Text>

@@ -145,9 +145,6 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
               const title =
                 threads.find((thread) => thread.id === item.threadId)?.title ||
                 `Conversation ${item.threadId.slice(0, 8)}`;
-              const container = item.containerId
-                ? `Container ${item.containerId.slice(0, 12)}`
-                : "No container";
               const created = item.createdAt
                 ? `Created ${new Date(item.createdAt).toLocaleString()}`
                 : "Creation time unavailable";
@@ -167,7 +164,7 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
                   }
                   description={
                     <Text type="supporting" maxLines={2}>
-                      {title} · {container} · {created}
+                      {title} · {created}
                     </Text>
                   }
                   endContent={
@@ -236,7 +233,10 @@ export function SandboxView({ threads }: { threads: Thread[] }) {
                     description="A previous command has an uncertain outcome. Stop or remove the sandbox before running another command."
                   />
                 )}
-                <SandboxTerminal threadId={selectedSandbox.threadId} />
+                <SandboxTerminal
+                  threadId={selectedSandbox.threadId}
+                  containerId={selectedSandbox.containerId}
+                />
               </VStack>
             </Dialog>
           )}
